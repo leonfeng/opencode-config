@@ -1,0 +1,92 @@
+{
+	"$schema": "https://opencode.ai/config.json",
+	"model": "vllm/bigbang",
+	"small_model": "vllm/kat-coder",
+	"enabled_providers": ["vllm"],
+	"compaction": {
+		"auto": true,
+		"prune": true,
+		"reserved": 32768
+	},
+	"agent": {
+		"compaction": {
+			"model": "vllm/kat-coder"
+		},
+		"title": {
+			"model": "vllm/kat-coder"
+		}
+	},
+	"instructions": [
+		"/home/leon/.config/opencode/no-rewrite-loop.md",
+		"/home/leon/.config/opencode/library-docs.md"
+	],
+	"mcp": {
+		"playwright": {
+			"type": "local",
+			"command": [
+				"/home/leon/.local/share/fnm/aliases/default/bin/pnpx",
+				"@playwright/mcp@latest"
+			],
+			"enabled": true,
+			"timeout": 60000,
+			"environment": {
+				"PATH": "/home/leon/.local/bin:/home/leon/.local/share/fnm/aliases/default/bin:/home/leon/.local/share/pnpm/bin:/usr/bin:/bin",
+				"COREPACK_ENABLE_DOWNLOAD_PROMPT": "0"
+			}
+		}
+	},
+	"provider": {
+		"vllm": {
+			"npm": "@ai-sdk/openai-compatible",
+			"name": "vLLM (local)",
+			"options": {
+				"baseURL": "http://127.0.0.1:8000/v1",
+				"apiKey": "sk-local",
+				"timeout": 600000
+			},
+			"models": {
+				"muse-glimmer": {
+					"name": "Muse Glimmer 30B (local)",
+					"limit": {
+						"context": 65536,
+						"output": 8192
+					},
+					"options": {
+						"temperature": 1.0
+					}
+				},
+				"kat-coder": {
+					"name": "KAT-Coder V2.5 (local)",
+					"limit": {
+						"context": 131072,
+						"output": 8192
+					},
+					"options": {
+						"temperature": 0.3
+					}
+				},
+				"bigbang": {
+					"name": "BigBang V1 (local)",
+					"reasoning": true,
+					"limit": {
+						"context": 131072,
+						"output": 16384
+					},
+					"options": {
+						"temperature": 0.6
+					}
+				},
+				"gemma-4": {
+					"name": "Gemma 4 26B-A4B (local)",
+					"limit": {
+						"context": 65536,
+						"output": 8192
+					},
+					"options": {
+						"temperature": 0.3
+					}
+				}
+			}
+		}
+	}
+}

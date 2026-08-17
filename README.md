@@ -15,7 +15,7 @@ Personal [OpenCode](https://opencode.ai) setup for local vLLM models, with plugi
 | Plugin | What it does |
 |---|---|
 | `tool-not-shell` | Blocks bash stand-ins for OpenCode tools (`cat`, `sed`, `ls`, `edit`, …). Append `# confirm` to run anyway. Also corrects invalid `openspec validate` flags. |
-| `stop-think-loop` | Recovers when a reply hits the output token limit while still thinking: strips stalled reasoning, disables thinking, and prompts a visible reply. Caps compaction output, turns off overflow autocontinue, and merges extra system prompts so Qwen/vLLM does not 400 on title generation. |
+| `stop-think-loop` | Recovers when a reply hits the output token limit while still thinking: strips stalled reasoning, disables thinking, and prompts a visible reply. Clears recovery after tool-calls finish (agent loops), caps recovery output to 4k tokens, and strips spent reasoning from tool/text turns. Caps compaction output, turns off overflow autocontinue, and merges extra system prompts so Qwen/vLLM does not 400 on title generation. |
 | `stop-dump-loop` | Stops repeat full-file reads. In explore mode, also caps unique files, total bytes, and whole-file size. |
 | `playwright-python-api` | Rejects JavaScript Playwright APIs (`waitForTimeout`, `getByRole`, sync `with page.expect_response`) in Python writes/edits, and annotates pytest `AttributeError` output with snake_case mappings. |
 | `stop-pytest-timeout-loop` | Raises bash timeout to 10 min for pytest, blocks hallucinated `pytest --timeout`, stops repeat full-suite runs after an OpenCode bash kill, and annotates timeout output. |

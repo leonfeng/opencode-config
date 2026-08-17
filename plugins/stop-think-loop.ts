@@ -9,6 +9,11 @@ const RECOVERY =
 const inFlight = new Set<string>()
 const disableThinking = new Set<string>()
 
+/** Cap output while recovering so BigBang cannot burn 16k tokens again. */
+const RECOVERY_MAX_OUTPUT_TOKENS = 4096
+
+const RECOVERY_FINISH = new Set(["tool-calls", "stop", "end_turn"])
+
 type ChatMessage = {
   info: { id?: string; role: string; finish?: string; sessionID?: string }
   parts: Array<{ type?: string; text?: string }>
@@ -20,6 +25,29 @@ function partText(part: { type?: string; text?: string }): string {
 
 function visibleOutput(parts: Array<{ type?: string; text?: string }>): boolean {
   return parts.some((part) => partText(part).trim() !== "" || part.type === "tool")
+}
+
+function clearRecovery(sessionID: string) {
+  disableThinking.delete(sessionID)
+}
+
+function stripSpentReasoning(messages: ChatMessage[]): number {
+  let stripped = 0
+  for (const msg of messages) {
+    if (msg.info.role !== "assistant") continue
+    const hasVisible = visibleOutput(msg.parts)
+    const before = msg.parts.length
+    if (msg.info.finish === "length" && !hasVisible) {
+      msg.parts = msg.parts.filter((part) => part.type !== "reasoning")
+    } else if (hasVisible) {
+      // Reasoning alongside tools/text is hidden from the user and bloats context.
+      msg.parts = msg.parts.filter((part) => part.type !== "reasoning")
+    } else {
+      continue
+    }
+    stripped += before - msg.parts.length
+  }
+  return stripped
 }
 
 function lastUserHasSentinel(messages: ChatMessage[]): boolean {
@@ -99,9 +127,14 @@ export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
       }
       if (!disableThinking.has(input.sessionID)) return
       applyRecoveryParams(output)
+      const cap = output.maxOutputTokens
+      if (cap === undefined || cap > RECOVERY_MAX_OUTPUT_TOKENS) {
+        output.maxOutputTokens = RECOVERY_MAX_OUTPUT_TOKENS
+      }
       await log("disabled thinking for recovery", {
         sessionID: input.sessionID,
         agent: input.agent,
+        maxOutputTokens: output.maxOutputTokens,
       })
     },
 
@@ -142,21 +175,37 @@ export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
           after: hoisted.length,
         })
       }
-      let stripped = 0
-      for (const msg of hoisted) {
-        if (msg.info.role !== "assistant") continue
-        if (msg.info.finish !== "length") continue
-        if (visibleOutput(msg.parts)) continue
-        const before = msg.parts.length
-        msg.parts = msg.parts.filter((part) => part.type !== "reasoning")
-        stripped += before - msg.parts.length
-      }
+      const stripped = stripSpentReasoning(hoisted)
       if (stripped > 0) {
-        await log("stripped stalled reasoning from context", { stripped })
+        await log("stripped spent reasoning from context", { stripped })
       }
     },
 
     event: async ({ event }) => {
+      if (event.type === "message.updated") {
+        const info = event.properties.info as {
+          role?: string
+          finish?: string
+          sessionID?: string
+          agent?: string
+        }
+        const sessionID = info.sessionID
+        if (
+          sessionID &&
+          info.role === "assistant" &&
+          info.finish &&
+          RECOVERY_FINISH.has(info.finish) &&
+          !SKIP_AGENTS.has(info.agent ?? "")
+        ) {
+          clearRecovery(sessionID)
+          await log("cleared recovery after assistant finish", {
+            sessionID,
+            finish: info.finish,
+          })
+        }
+        return
+      }
+
       if (event.type !== "session.idle") return
       const sessionID = event.properties.sessionID
       if (!sessionID || inFlight.has(sessionID)) return
@@ -175,7 +224,7 @@ export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
         const info = last.info
         if (info.role !== "assistant") return
         if (visibleOutput(last.parts)) {
-          disableThinking.delete(sessionID)
+          clearRecovery(sessionID)
           return
         }
         if (info.finish !== "length") return

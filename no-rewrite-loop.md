@@ -7,6 +7,8 @@ After every successful implementation `write` or `edit`:
 
 If a shell command already completed, do not run it again. Repeating `pytest`, `python -c`, grep, or ls is a loop: stop and use the previous output. After the test suite passes, do not run it again unless a later unfinished task requires it.
 
+If bash output says `bash tool terminated command after exceeding timeout`, OpenCode killed the **shell**, not pytest. pytest has **no** `--timeout` CLI flag — never add it. Do not rerun the full suite: use the partial output, run `-m 'not e2e'` for unit tests, or target one file/node (`tests/test_api.py::test_foo`). For long runs, pass a larger `timeout` on the bash tool (milliseconds), not a pytest flag.
+
 OpenCode tools (`read`, `edit`, `write`, `glob`, `grep`) are function calls, not binaries. Never run tool names as shell commands (`edit << EOF` fails with command not found). Do not use `cat`/`head`/`tail` to read files (`read`), `cat >`/`sed -i` to write them (`write`/`edit`), or `ls`/`find` to list them (`glob`). Use bash only for programs on PATH (git, pytest, python, openspec). To change a file, call `edit` with filePath, oldString, and newString.
 
 `openspec validate` takes a positional name: `openspec validate "<name>"`. It has no `--change` flag — that flag is for `status` and `instructions`. `--changes` (plural) validates every change and takes no name. Do not run `openspec validate --help` to rediscover this.

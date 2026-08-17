@@ -14,6 +14,8 @@ type SessionState = {
   /** Normalized full-suite pytest commands killed by OpenCode bash timeout. */
   timedOutFullSuite: Set<string>
   timeoutHints: number
+  /** Normalized pytest file/node targets that already completed. */
+  completedTargets: Map<string, number>
 }
 
 const sessions = new Map<string, SessionState>()
@@ -21,7 +23,7 @@ const sessions = new Map<string, SessionState>()
 function sessionState(sessionID: string): SessionState {
   let st = sessions.get(sessionID)
   if (!st) {
-    st = { timedOutFullSuite: new Set(), timeoutHints: 0 }
+    st = { timedOutFullSuite: new Set(), timeoutHints: 0, completedTargets: new Map() }
     sessions.set(sessionID, st)
   }
   return st
@@ -66,9 +68,13 @@ function stripEnvPrefix(statement: string): string {
   return statement.trim().replace(/^(\w+=\S+\s+)+/, "").trim()
 }
 
+function stripRunnerPrefix(statement: string): string {
+  return stripEnvPrefix(statement).replace(/^uv\s+run\s+/, "").trim()
+}
+
 function isPytestStatement(statement: string): boolean {
-  const s = stripEnvPrefix(statement)
-  return /^(?:\S+\/)?(?:python3?\s+-m\s+)?pytest(?:\s|$)/.test(s)
+  const s = stripRunnerPrefix(statement)
+  return /^(?:\S+\/)?pytest(?:\s|$)/.test(s)
 }
 
 /** pytest has no top-level `--timeout` CLI flag (only pytest-timeout plugin: `--timeout=SECS`). */
@@ -79,9 +85,19 @@ function hasHallucinatedPytestTimeout(statement: string): boolean {
 }
 
 function pytestArgs(statement: string): string {
-  const s = stripEnvPrefix(statement)
-  const m = s.match(/^(?:\S+\/)?(?:python3?\s+-m\s+)?pytest(?:\s+(.*))?$/i)
+  const s = stripRunnerPrefix(statement)
+  const m = s.match(/^(?:\S+\/)?pytest(?:\s+(.*))?$/i)
   return (m?.[1] ?? "").trim()
+}
+
+/** First file or node target in pytest args, for repeat-run detection. */
+function pytestTargetKey(statement: string): string | null {
+  const args = pytestArgs(statement)
+  if (!args) return null
+  const node = args.match(/([\w./-]+\.py(?:::[\w[\].-]+)?)/)?.[1]
+  if (node) return node.toLowerCase()
+  const dir = args.match(/^(tests[\w./-]*)/)?.[1]
+  return dir?.toLowerCase() ?? null
 }
 
 /** Whole suite: bare `pytest`, `pytest -v`, `pytest tests/`, no `.py` or `::` target. */
@@ -101,7 +117,7 @@ function isFullPytestSuite(statement: string): boolean {
 }
 
 function normalizeFullSuiteKey(statement: string): string {
-  return stripEnvPrefix(statement)
+  return stripRunnerPrefix(statement)
     .replace(/\s+/g, " ")
     .replace(/\s2>&1\s*$/, "")
     .trim()
@@ -170,6 +186,24 @@ export const StopPytestTimeoutLoopPlugin: Plugin = async ({ client }) => {
             )
           }
         }
+
+        const target = pytestTargetKey(statement)
+        if (target) {
+          const st = sessionState(input.sessionID)
+          const prior = st.completedTargets.get(target) ?? 0
+          if (prior >= 2) {
+            await log("blocked repeat pytest target", {
+              sessionID: input.sessionID,
+              target,
+              count: prior + 1,
+            })
+            throw new Error(
+              `pytest on \`${target}\` already completed ${prior} time(s) this session. ` +
+                "Use the prior output or fix the code — do not rerun the same target. " +
+                BYPASS,
+            )
+          }
+        }
       }
 
       if (!needsLongTimeout) return
@@ -194,26 +228,36 @@ export const StopPytestTimeoutLoopPlugin: Plugin = async ({ client }) => {
       if (!command.trim()) return
 
       const text = `${output.output ?? ""}`
-      const match = BASH_TIMEOUT_RE.exec(text)
-      if (!match) return
-
-      const killedMs = Number(match[1])
       const st = sessionState(input.sessionID)
-      st.timeoutHints += 1
+      const timeoutMatch = BASH_TIMEOUT_RE.exec(text)
 
       for (const statement of splitStatements(command)) {
         if (!isPytestStatement(statement)) continue
-        if (isFullPytestSuite(statement)) {
-          st.timedOutFullSuite.add(normalizeFullSuiteKey(statement))
+
+        if (timeoutMatch) {
+          st.timeoutHints += 1
+          if (isFullPytestSuite(statement)) {
+            st.timedOutFullSuite.add(normalizeFullSuiteKey(statement))
+          }
+          output.output = `${text}\n\n${pytestTimeoutHint(Number(timeoutMatch[1]), statement)}`
+          await log("annotated pytest bash timeout", {
+            sessionID: input.sessionID,
+            killedMs: Number(timeoutMatch[1]),
+            fullSuite: isFullPytestSuite(statement),
+            hints: st.timeoutHints,
+          })
+          return
         }
-        output.output = `${text}\n\n${pytestTimeoutHint(killedMs, statement)}`
-        await log("annotated pytest bash timeout", {
+
+        const target = pytestTargetKey(statement)
+        if (!target) continue
+        const count = (st.completedTargets.get(target) ?? 0) + 1
+        st.completedTargets.set(target, count)
+        await log("recorded pytest target run", {
           sessionID: input.sessionID,
-          killedMs,
-          fullSuite: isFullPytestSuite(statement),
-          hints: st.timeoutHints,
+          target,
+          count,
         })
-        return
       }
     },
   }

@@ -5,7 +5,7 @@ After every successful implementation `write` or `edit`:
 - If the target file already exists from a successful write, mark the task complete. Do not rewrite it.
 - Cycling the same two or more files (A then B then A) with no checkbox update is a loop. Stop, mark those tasks complete, and move on.
 
-If a shell command already completed, do not run it again. Repeating `pytest`, `python -c`, grep, or ls is a loop: stop and use the previous output. After the test suite passes, do not run it again unless a later unfinished task requires it.
+If a shell command already completed, do not run it again. Repeating `pytest`, `python -c`, grep, or ls is a loop: stop and use the previous output. After the test suite passes, do not run it again unless a later unfinished task requires it. Do not rerun the same pytest file/node — read the output you already have and edit the code.
 
 If bash output says `bash tool terminated command after exceeding timeout`, OpenCode killed the **shell**, not pytest. pytest has **no** `--timeout` CLI flag — never add it. Do not rerun the full suite: use the partial output, run `-m 'not e2e'` for unit tests, or target one file/node (`tests/test_api.py::test_foo`). For long runs, pass a larger `timeout` on the bash tool (milliseconds), not a pytest flag.
 

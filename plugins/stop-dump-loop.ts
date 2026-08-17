@@ -8,6 +8,10 @@ const MAX_SAME_FILE = 1
 const EXPLORE_MAX_FILES = 8
 const EXPLORE_MAX_BYTES = 80_000
 const EXPLORE_WHOLE_FILE_BYTES = 24_576
+/** Build/apply: allow more than explore, but stop template/test dumps. */
+const BUILD_MAX_FILES = 18
+const BUILD_MAX_BYTES = 100_000
+const BUILD_MAX_PARTIAL_READS = 3
 
 const STOP_DUMP =
   "Dump loop: stop reading. Answer from what you already have. Use grep for a symbol; do not read whole test files or dump the repository."
@@ -15,6 +19,7 @@ const STOP_DUMP =
 type SessionState = {
   explore: boolean
   reads: Map<string, number>
+  partialReads: Map<string, number>
   uniqueFiles: number
   bytes: number
 }
@@ -35,7 +40,7 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
   const state = (sessionID: string): SessionState => {
     let current = sessions.get(sessionID)
     if (!current) {
-      current = { explore: false, reads: new Map(), uniqueFiles: 0, bytes: 0 }
+      current = { explore: false, reads: new Map(), partialReads: new Map(), uniqueFiles: 0, bytes: 0 }
       sessions.set(sessionID, current)
     }
     return current
@@ -82,6 +87,7 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
       const key = resolvePath(filePath)
       const partial = isPartialRead(args)
       const prior = st.reads.get(key) ?? 0
+      const partialPrior = st.partialReads.get(key) ?? 0
       const size = fileSize(filePath)
 
       if (!partial && prior >= MAX_SAME_FILE) {
@@ -90,6 +96,20 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
           `Already read ${filePath}. Re-reading it is a dump loop. ${STOP_DUMP}`,
         )
       }
+
+      if (partial && partialPrior >= BUILD_MAX_PARTIAL_READS) {
+        await log("blocked repeat partial read", {
+          sessionID: input.sessionID,
+          filePath,
+          partialReads: partialPrior,
+        })
+        throw new Error(
+          `Already read sections of ${filePath} ${partialPrior} times. ${STOP_DUMP}`,
+        )
+      }
+
+      const maxFiles = st.explore ? EXPLORE_MAX_FILES : BUILD_MAX_FILES
+      const maxBytes = st.explore ? EXPLORE_MAX_BYTES : BUILD_MAX_BYTES
 
       if (st.explore && !partial && size !== undefined && size > EXPLORE_WHOLE_FILE_BYTES) {
         await log("blocked large whole-file read", {
@@ -102,19 +122,23 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
         )
       }
 
-      if (st.explore && (st.uniqueFiles >= EXPLORE_MAX_FILES || st.bytes >= EXPLORE_MAX_BYTES)) {
-        await log("blocked explore dump cap", {
+      if (st.uniqueFiles >= maxFiles || st.bytes >= maxBytes) {
+        await log("blocked dump cap", {
           sessionID: input.sessionID,
+          explore: st.explore,
           uniqueFiles: st.uniqueFiles,
           bytes: st.bytes,
+          maxFiles,
+          maxBytes,
         })
         throw new Error(
-          `Explore already loaded ${st.uniqueFiles} files (~${st.bytes} bytes). ${STOP_DUMP}`,
+          `${st.explore ? "Explore" : "Build"} already loaded ${st.uniqueFiles} files (~${st.bytes} bytes). ${STOP_DUMP}`,
         )
       }
 
-      if (prior === 0) st.uniqueFiles += 1
-      st.reads.set(key, prior + 1)
+      if (prior === 0 && partialPrior === 0) st.uniqueFiles += 1
+      st.reads.set(key, prior + (partial ? 0 : 1))
+      if (partial) st.partialReads.set(key, partialPrior + 1)
       const added = partial
         ? Math.min(8_000, size ?? 8_000)
         : (size ?? 0)

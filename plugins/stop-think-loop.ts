@@ -47,6 +47,24 @@ function applyRecoveryParams(output: { options: Record<string, any> }) {
   }
 }
 
+function mergeSystemPrompts(system: string[]): string[] {
+  const parts = system.map((text) => text.trim()).filter(Boolean)
+  if (parts.length <= 1) return parts
+  return [parts.join("\n\n")]
+}
+
+function hoistSystemMessages(messages: ChatMessage[]): ChatMessage[] {
+  const systems = messages.filter((msg) => msg.info.role === "system")
+  if (systems.length === 0) return messages
+  const rest = messages.filter((msg) => msg.info.role !== "system")
+  if (systems.length === 1 && messages[0]?.info.role === "system") return messages
+  const text = systems
+    .map((msg) => msg.parts.map(partText).join("\n").trim())
+    .filter(Boolean)
+    .join("\n\n")
+  return [{ ...systems[0], parts: [{ type: "text", text }] }, ...rest]
+}
+
 export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
   const log = async (message: string, extra?: Record<string, unknown>) => {
     try {
@@ -87,6 +105,17 @@ export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
       })
     },
 
+    "experimental.chat.system.transform": async (_input, output) => {
+      const before = output.system.length
+      output.system = mergeSystemPrompts(output.system)
+      if (output.system.length !== before) {
+        await log("merged system prompts for Qwen chat template", {
+          before,
+          after: output.system.length,
+        })
+      }
+    },
+
     "experimental.session.compacting": async (_input, output) => {
       output.prompt = [
         "Write a short continuation summary. Do not copy file contents, tool output, or code.",
@@ -104,8 +133,17 @@ export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
     },
 
     "experimental.chat.messages.transform": async (_input, output) => {
+      const messages = output.messages as ChatMessage[]
+      const hoisted = hoistSystemMessages(messages)
+      if (hoisted !== messages) {
+        output.messages = hoisted
+        await log("hoisted system messages for Qwen chat template", {
+          before: messages.length,
+          after: hoisted.length,
+        })
+      }
       let stripped = 0
-      for (const msg of output.messages as ChatMessage[]) {
+      for (const msg of hoisted) {
         if (msg.info.role !== "assistant") continue
         if (msg.info.finish !== "length") continue
         if (visibleOutput(msg.parts)) continue

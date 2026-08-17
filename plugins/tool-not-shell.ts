@@ -4,6 +4,46 @@ const SERVICE = "tool-not-shell"
 const CONFIRM_RE = /#\s*confirm\s*$/i
 const BYPASS = 'To run this in bash anyway, append `# confirm`.'
 
+type SessionState = {
+  /** Stand-in token -> times blocked this session. */
+  blocked: Map<string, number>
+}
+
+const sessions = new Map<string, SessionState>()
+
+function sessionState(sessionID: string): SessionState {
+  let st = sessions.get(sessionID)
+  if (!st) {
+    st = { blocked: new Map() }
+    sessions.set(sessionID, st)
+  }
+  return st
+}
+
+function recordBlock(sessionID: string, token: string): number {
+  const st = sessionState(sessionID)
+  const count = (st.blocked.get(token) ?? 0) + 1
+  st.blocked.set(token, count)
+  return count
+}
+
+function blockMessage(token: string, hint: string, count: number): string {
+  if (count >= 2) {
+    return (
+      `Shell stand-in loop: \`${token}\` in bash was blocked ${count} times this session. ` +
+      "Stop retrying in bash. " +
+      hint +
+      " If you need a count, use the grep tool once and count matching lines in its output. " +
+      BYPASS
+    )
+  }
+  return (
+    `\`${token}\` is not a bash stand-in for an OpenCode tool. ${hint} ` +
+    "Do not retry this in bash — use the OpenCode tool on the next turn. " +
+    BYPASS
+  )
+}
+
 /** OpenCode tools that are not Unix programs. */
 const TOOL_AS_SHELL: Record<string, string> = {
   edit: "Call the edit tool with filePath, oldString, and newString.",
@@ -162,13 +202,13 @@ export const ToolNotShellPlugin: Plugin = async ({ client }) => {
         }
         const match = hintFor(statement)
         if (!match) continue
+        const count = recordBlock(input.sessionID, match.token)
         await log("blocked shell stand-in", {
           sessionID: input.sessionID,
           token: match.token,
+          count,
         })
-        throw new Error(
-          `\`${match.token}\` is not a bash stand-in for an OpenCode tool. ${match.hint} ${BYPASS}`,
-        )
+        throw new Error(blockMessage(match.token, match.hint, count))
       }
     },
   }

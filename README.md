@@ -6,8 +6,8 @@ Personal [OpenCode](https://opencode.ai) setup for local vLLM models, with plugi
 
 - **Provider:** local vLLM (`http://127.0.0.1:8000/v1`) via `@ai-sdk/openai-compatible`
 - **Default model:** BigBang V1 (reasoning)
-- **Small / title / compaction:** KAT-Coder V2.5
-- **Also configured:** Muse Glimmer 30B, Gemma 4 26B-A4B
+- **All tasks (small / title / summary / compaction):** same BigBang V1 endpoint
+- **Also configured (not currently served):** KAT-Coder V2.5, Muse Glimmer 30B, Gemma 4 26B-A4B
 - **MCP:** Playwright (`pnpx @playwright/mcp@latest`)
 
 ## Plugins

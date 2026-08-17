@@ -68,15 +68,17 @@ export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
     },
 
     "chat.params": async (input, output) => {
-      if (input.agent === "compaction") {
+      if (SKIP_AGENTS.has(input.agent)) {
         applyRecoveryParams(output)
-        output.maxOutputTokens = 2048
-        await log("compaction: disabled thinking, capped output", {
+        if (input.agent === "compaction") {
+          output.maxOutputTokens = 2048
+        }
+        await log(`${input.agent}: disabled thinking`, {
           sessionID: input.sessionID,
+          maxOutputTokens: output.maxOutputTokens,
         })
         return
       }
-      if (SKIP_AGENTS.has(input.agent)) return
       if (!disableThinking.has(input.sessionID)) return
       applyRecoveryParams(output)
       await log("disabled thinking for recovery", {

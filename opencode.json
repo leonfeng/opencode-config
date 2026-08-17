@@ -1,7 +1,7 @@
 {
 	"$schema": "https://opencode.ai/config.json",
 	"model": "vllm/bigbang",
-	"small_model": "vllm/kat-coder",
+	"small_model": "vllm/bigbang",
 	"enabled_providers": ["vllm"],
 	"compaction": {
 		"auto": true,
@@ -10,10 +10,13 @@
 	},
 	"agent": {
 		"compaction": {
-			"model": "vllm/kat-coder"
+			"model": "vllm/bigbang"
 		},
 		"title": {
-			"model": "vllm/kat-coder"
+			"model": "vllm/bigbang"
+		},
+		"summary": {
+			"model": "vllm/bigbang"
 		}
 	},
 	"instructions": [

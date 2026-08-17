@@ -2,15 +2,21 @@ import type { Plugin } from "@opencode-ai/plugin"
 
 const SERVICE = "stop-think-loop"
 const SKIP_AGENTS = new Set(["title", "summary", "compaction"])
+/** Primary coding agent — disable open-ended reasoning to avoid multi-minute stalls. */
+const BUILD_AGENTS = new Set(["build"])
 const SENTINEL = "Your last reply hit the output token limit while still thinking."
 const RECOVERY =
   `${SENTINEL} The user saw nothing. Stop thinking. Reply now from what you already gathered. Do not rerun tools unless one specific fact is missing.`
 
 const inFlight = new Set<string>()
 const disableThinking = new Set<string>()
+/** Sessions that hit a think-length stall — keep thinking off for the rest of the session. */
+const stalledSessions = new Set<string>()
 
 /** Cap output while recovering so BigBang cannot burn 16k tokens again. */
 const RECOVERY_MAX_OUTPUT_TOKENS = 4096
+/** Normal build turns: thinking off, but allow room for tool calls + text. */
+const BUILD_MAX_OUTPUT_TOKENS = 8192
 
 const RECOVERY_FINISH = new Set(["tool-calls", "stop", "end_turn"])
 
@@ -50,12 +56,26 @@ function stripSpentReasoning(messages: ChatMessage[]): number {
   return stripped
 }
 
-function lastUserHasSentinel(messages: ChatMessage[]): boolean {
+/** Skip only an immediate re-stall right after sentinel with no visible assistant output in between. */
+function shouldSkipRecovery(messages: ChatMessage[]): boolean {
+  let lastUserIdx = -1
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].info.role !== "user") continue
-    return messages[i].parts.some((part) => partText(part).includes(SENTINEL))
+    lastUserIdx = i
+    break
   }
-  return false
+  if (lastUserIdx === -1) return false
+
+  const hasSentinel = messages[lastUserIdx].parts.some((part) =>
+    partText(part).includes(SENTINEL),
+  )
+  if (!hasSentinel) return false
+
+  for (let i = lastUserIdx + 1; i < messages.length - 1; i++) {
+    const msg = messages[i]
+    if (msg.info.role === "assistant" && visibleOutput(msg.parts)) return false
+  }
+  return true
 }
 
 function applyRecoveryParams(output: { options: Record<string, any> }) {
@@ -73,6 +93,19 @@ function applyRecoveryParams(output: { options: Record<string, any> }) {
     enable_thinking: false,
     preserve_thinking: true,
   }
+}
+
+function capOutputTokens(
+  output: { maxOutputTokens?: number },
+  max: number,
+) {
+  if (output.maxOutputTokens === undefined || output.maxOutputTokens > max) {
+    output.maxOutputTokens = max
+  }
+}
+
+function isReasoningModel(model: { capabilities?: { reasoning?: boolean } }): boolean {
+  return model.capabilities?.reasoning === true
 }
 
 function mergeSystemPrompts(system: string[]): string[] {
@@ -108,7 +141,7 @@ export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
     "chat.message": async (input, output) => {
       if (output.parts.some((part) => partText(part).includes(SENTINEL))) {
         disableThinking.add(input.sessionID)
-      } else if (input.sessionID) {
+      } else if (input.sessionID && !stalledSessions.has(input.sessionID)) {
         disableThinking.delete(input.sessionID)
       }
     },
@@ -125,12 +158,35 @@ export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
         })
         return
       }
-      if (!disableThinking.has(input.sessionID)) return
-      applyRecoveryParams(output)
-      const cap = output.maxOutputTokens
-      if (cap === undefined || cap > RECOVERY_MAX_OUTPUT_TOKENS) {
-        output.maxOutputTokens = RECOVERY_MAX_OUTPUT_TOKENS
+
+      const recovering =
+        disableThinking.has(input.sessionID) || stalledSessions.has(input.sessionID)
+      const buildReasoning =
+        BUILD_AGENTS.has(input.agent) && isReasoningModel(input.model)
+
+      if (buildReasoning) {
+        applyRecoveryParams(output)
+        capOutputTokens(
+          output,
+          recovering ? RECOVERY_MAX_OUTPUT_TOKENS : BUILD_MAX_OUTPUT_TOKENS,
+        )
+        await log(
+          recovering
+            ? "disabled thinking for recovery"
+            : "build agent: disabled thinking on reasoning model",
+          {
+            sessionID: input.sessionID,
+            agent: input.agent,
+            model: input.model.id,
+            maxOutputTokens: output.maxOutputTokens,
+          },
+        )
+        return
       }
+
+      if (!recovering) return
+      applyRecoveryParams(output)
+      capOutputTokens(output, RECOVERY_MAX_OUTPUT_TOKENS)
       await log("disabled thinking for recovery", {
         sessionID: input.sessionID,
         agent: input.agent,
@@ -195,7 +251,8 @@ export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
           info.role === "assistant" &&
           info.finish &&
           RECOVERY_FINISH.has(info.finish) &&
-          !SKIP_AGENTS.has(info.agent ?? "")
+          !SKIP_AGENTS.has(info.agent ?? "") &&
+          !stalledSessions.has(sessionID)
         ) {
           clearRecovery(sessionID)
           await log("cleared recovery after assistant finish", {
@@ -229,8 +286,9 @@ export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
         }
         if (info.finish !== "length") return
         if (SKIP_AGENTS.has((info as { agent?: string }).agent ?? "")) return
-        if (lastUserHasSentinel(messages)) return
+        if (shouldSkipRecovery(messages)) return
 
+        stalledSessions.add(sessionID)
         disableThinking.add(sessionID)
         await log("recovering think-length stall", {
           sessionID,

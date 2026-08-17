@@ -1,6 +1,7 @@
 import { statSync } from "node:fs"
 import { resolve } from "node:path"
 import type { Plugin } from "@opencode-ai/plugin"
+import { dumpCapSessions } from "./shared-session-state.ts"
 
 const SERVICE = "stop-dump-loop"
 const EXPLORE_MARKER = "Enter explore mode."
@@ -14,7 +15,11 @@ const BUILD_MAX_BYTES = 100_000
 const BUILD_MAX_PARTIAL_READS = 3
 
 const STOP_DUMP =
-  "Dump loop: stop reading. Answer from what you already have. Use grep for a symbol; do not read whole test files or dump the repository."
+  "Dump loop: stop reading. Answer from what you already have. Use grep for a symbol; do not read whole test files or dump the repository. Do not use cat in bash — it is blocked too."
+
+function isCoreSourceFile(filePath: string): boolean {
+  return /\/snekdo\/[^/]+\.py$/.test(filePath.replace(/\\/g, "/"))
+}
 
 type SessionState = {
   explore: boolean
@@ -110,6 +115,8 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
 
       const maxFiles = st.explore ? EXPLORE_MAX_FILES : BUILD_MAX_FILES
       const maxBytes = st.explore ? EXPLORE_MAX_BYTES : BUILD_MAX_BYTES
+      const atCap = st.uniqueFiles >= maxFiles || st.bytes >= maxBytes
+      const coreSource = !st.explore && !partial && prior === 0 && isCoreSourceFile(key)
 
       if (st.explore && !partial && size !== undefined && size > EXPLORE_WHOLE_FILE_BYTES) {
         await log("blocked large whole-file read", {
@@ -122,7 +129,8 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
         )
       }
 
-      if (st.uniqueFiles >= maxFiles || st.bytes >= maxBytes) {
+      if (atCap && !coreSource) {
+        dumpCapSessions.add(input.sessionID)
         await log("blocked dump cap", {
           sessionID: input.sessionID,
           explore: st.explore,
@@ -134,6 +142,13 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
         throw new Error(
           `${st.explore ? "Explore" : "Build"} already loaded ${st.uniqueFiles} files (~${st.bytes} bytes). ${STOP_DUMP}`,
         )
+      }
+
+      if (coreSource && atCap) {
+        await log("allowed core source read at cap", {
+          sessionID: input.sessionID,
+          filePath,
+        })
       }
 
       if (prior === 0 && partialPrior === 0) st.uniqueFiles += 1

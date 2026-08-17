@@ -1,1 +1,26 @@
 # opencode-config
+
+Personal [OpenCode](https://opencode.ai) setup for local vLLM models, with plugins and instructions that keep coding agents from looping, misusing the shell, or writing JavaScript Playwright APIs in Python.
+
+## Runtime
+
+- **Provider:** local vLLM (`http://127.0.0.1:8000/v1`) via `@ai-sdk/openai-compatible`
+- **Default model:** BigBang V1 (reasoning)
+- **Small / title / compaction:** KAT-Coder V2.5
+- **Also configured:** Muse Glimmer 30B, Gemma 4 26B-A4B
+- **MCP:** Playwright (`pnpx @playwright/mcp@latest`)
+
+## Plugins
+
+| Plugin | What it does |
+|---|---|
+| `tool-not-shell` | Blocks bash stand-ins for OpenCode tools (`cat`, `sed`, `ls`, `edit`, …). Append `# confirm` to run anyway. Also corrects invalid `openspec validate` flags. |
+| `stop-think-loop` | Recovers when a reply hits the output token limit while still thinking: strips stalled reasoning, disables thinking, and prompts a visible reply. Caps compaction output and turns off overflow autocontinue. |
+| `stop-dump-loop` | Stops repeat full-file reads. In explore mode, also caps unique files, total bytes, and whole-file size. |
+| `playwright-python-api` | Rejects JavaScript Playwright APIs (`waitForTimeout`, `getByRole`, sync `with page.expect_response`) in Python writes/edits, and annotates pytest `AttributeError` output with snake_case mappings. |
+
+## Skills and instructions
+
+- **`playwright-python`** — load before writing Playwright Python tests. Documents snake_case APIs, `async with expect_response`, and the official Page docs.
+- **`no-rewrite-loop.md`** — after a successful write/edit, mark the OpenSpec task done; do not rewrite existing files or rerun finished commands; use OpenCode tools instead of shell stand-ins; explore/archive stop conditions.
+- **`library-docs.md`** — for unfamiliar libraries, load a skill or fetch official docs instead of guessing (Playwright Python is the worked example).

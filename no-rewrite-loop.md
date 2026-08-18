@@ -7,6 +7,8 @@ After every successful implementation `write` or `edit`:
 
 If a shell command already completed, do not run it again. Repeating `pytest`, `python -c`, grep, or ls is a loop: stop and use the previous output. After the test suite passes, do not run it again unless a later unfinished task requires it. Do not rerun the same pytest file/node — read the output you already have and edit the code.
 
+If an `edit` fails with "oldString and newString are identical", the change is already in the file. Mark the OpenSpec task done and move on — do not retry the same edit.
+
 If bash output says a session read cap was hit, that is **not** a rate limit. Do not `sleep` and retry `read`. Use grep for a missing symbol, or continue from files already in context.
 
 If bash output says `bash tool terminated command after exceeding timeout`, OpenCode killed the **shell**, not pytest. pytest has **no** `--timeout` CLI flag — never add it. Do not rerun the full suite: use the partial output, run `-m 'not e2e'` for unit tests, or target one file/node (`tests/test_api.py::test_foo`). For long runs, pass a larger `timeout` on the bash tool (milliseconds), not a pytest flag.

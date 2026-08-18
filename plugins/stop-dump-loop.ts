@@ -1,7 +1,11 @@
 import { statSync } from "node:fs"
 import { resolve } from "node:path"
 import type { Plugin } from "@opencode-ai/plugin"
-import { dumpCapSessions } from "./shared-session-state.ts"
+import {
+  dumpCapRecoverySent,
+  dumpCapSessions,
+  standInRecoveryInFlight,
+} from "./shared-session-state.ts"
 
 const SERVICE = "stop-dump-loop"
 const EXPLORE_MARKER = "Enter explore mode."
@@ -9,16 +13,25 @@ const MAX_SAME_FILE = 1
 const EXPLORE_MAX_FILES = 8
 const EXPLORE_MAX_BYTES = 80_000
 const EXPLORE_WHOLE_FILE_BYTES = 24_576
-/** Build/apply: allow more than explore, but stop template/test dumps. */
-const BUILD_MAX_FILES = 18
+/** Build/apply: allow more than explore, but stop whole-repo dumps. */
+const BUILD_MAX_FILES = 24
 const BUILD_MAX_BYTES = 100_000
 const BUILD_MAX_PARTIAL_READS = 3
+const TEMPLATE_PASS_BYTES = 8_192
 
 const STOP_DUMP =
-  "Dump loop: stop reading. Answer from what you already have. Use grep for a symbol; do not read whole test files or dump the repository. Do not use cat in bash — it is blocked too."
+  "This is a session read cap, not a rate limit. Do not sleep and retry. Do not cat/head in bash. Use grep for a missing symbol, or implement from files already in context."
 
-function isCoreSourceFile(filePath: string): boolean {
-  return /\/snekdo\/[^/]+\.py$/.test(filePath.replace(/\\/g, "/"))
+const DUMP_CAP_RECOVERY =
+  "Read cap is not a rate limit. Do not sleep. Do not retry read or cat. Grep the missing symbol, or continue from files already in context."
+
+function isPassThroughAtCap(filePath: string, size?: number): boolean {
+  const p = filePath.replace(/\\/g, "/")
+  if (/\/snekdo\/[^/]+\.py$/.test(p)) return true
+  if (/\/templates\/[^/]+\.(html|j2|jinja2)$/.test(p)) {
+    return size === undefined || size <= TEMPLATE_PASS_BYTES
+  }
+  return false
 }
 
 type SessionState = {
@@ -116,7 +129,8 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
       const maxFiles = st.explore ? EXPLORE_MAX_FILES : BUILD_MAX_FILES
       const maxBytes = st.explore ? EXPLORE_MAX_BYTES : BUILD_MAX_BYTES
       const atCap = st.uniqueFiles >= maxFiles || st.bytes >= maxBytes
-      const coreSource = !st.explore && !partial && prior === 0 && isCoreSourceFile(key)
+      const passThrough =
+        !st.explore && !partial && prior === 0 && isPassThroughAtCap(key, size)
 
       if (st.explore && !partial && size !== undefined && size > EXPLORE_WHOLE_FILE_BYTES) {
         await log("blocked large whole-file read", {
@@ -129,7 +143,7 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
         )
       }
 
-      if (atCap && !coreSource) {
+      if (atCap && !passThrough) {
         dumpCapSessions.add(input.sessionID)
         await log("blocked dump cap", {
           sessionID: input.sessionID,
@@ -139,13 +153,31 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
           maxFiles,
           maxBytes,
         })
+        if (
+          !dumpCapRecoverySent.has(input.sessionID) &&
+          !standInRecoveryInFlight.has(input.sessionID)
+        ) {
+          dumpCapRecoverySent.add(input.sessionID)
+          standInRecoveryInFlight.add(input.sessionID)
+          try {
+            await client.session.promptAsync({
+              path: { id: input.sessionID },
+              body: { parts: [{ type: "text", text: DUMP_CAP_RECOVERY }] },
+            })
+            await log("injected dump-cap recovery", { sessionID: input.sessionID })
+          } catch {
+            dumpCapRecoverySent.delete(input.sessionID)
+          } finally {
+            standInRecoveryInFlight.delete(input.sessionID)
+          }
+        }
         throw new Error(
           `${st.explore ? "Explore" : "Build"} already loaded ${st.uniqueFiles} files (~${st.bytes} bytes). ${STOP_DUMP}`,
         )
       }
 
-      if (coreSource && atCap) {
-        await log("allowed core source read at cap", {
+      if (passThrough && atCap) {
+        await log("allowed pass-through read at cap", {
           sessionID: input.sessionID,
           filePath,
         })

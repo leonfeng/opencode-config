@@ -7,6 +7,8 @@ After every successful implementation `write` or `edit`:
 
 If a shell command already completed, do not run it again. Repeating `pytest`, `python -c`, grep, or ls is a loop: stop and use the previous output. After the test suite passes, do not run it again unless a later unfinished task requires it. Do not rerun the same pytest file/node — read the output you already have and edit the code.
 
+If bash output says a session read cap was hit, that is **not** a rate limit. Do not `sleep` and retry `read`. Use grep for a missing symbol, or continue from files already in context.
+
 If bash output says `bash tool terminated command after exceeding timeout`, OpenCode killed the **shell**, not pytest. pytest has **no** `--timeout` CLI flag — never add it. Do not rerun the full suite: use the partial output, run `-m 'not e2e'` for unit tests, or target one file/node (`tests/test_api.py::test_foo`). For long runs, pass a larger `timeout` on the bash tool (milliseconds), not a pytest flag.
 
 OpenCode tools (`read`, `edit`, `write`, `glob`, `grep`) are function calls, not binaries. Never run tool names as shell commands (`edit << EOF` fails with command not found). Do not use `cat`/`head`/`tail` to read files (`read`), `cat >`/`sed -i` to write them (`write`/`edit`), or `ls`/`find` to list them (`glob`). Do not run `grep`/`rg` in bash — call the `grep` tool with pattern and path; count matches in its output if you need a number. Repeating a blocked bash stand-in is a loop: switch to the OpenCode tool immediately. Use bash only for programs on PATH (git, pytest, python, openspec). To change a file, call `edit` with filePath, oldString, and newString.

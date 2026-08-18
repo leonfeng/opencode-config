@@ -237,6 +237,30 @@ function hintFor(statement: string): { token: string; hint: string } | null {
   return null
 }
 
+function sleepSeconds(statement: string): number | null {
+  const match = /^sleep\s+(\d+(?:\.\d+)?)([smh]?)\s*$/i.exec(statement.trim())
+  if (!match) return null
+  const n = Number(match[1])
+  const unit = (match[2] || "s").toLowerCase()
+  if (unit === "m") return n * 60
+  if (unit === "h") return n * 3600
+  return n
+}
+
+function commandIsOnlySleep(command: string): boolean {
+  const statements = splitStatements(command)
+  return statements.length === 1 && sleepSeconds(statements[0]) !== null
+}
+
+function maxSleepSeconds(command: string): number {
+  let max = 0
+  for (const statement of splitStatements(command)) {
+    const sec = sleepSeconds(statement)
+    if (sec != null && sec > max) max = sec
+  }
+  return max
+}
+
 export const ToolNotShellPlugin: Plugin = async ({ client }) => {
   const log = async (message: string, extra?: Record<string, unknown>) => {
     try {
@@ -254,6 +278,23 @@ export const ToolNotShellPlugin: Plugin = async ({ client }) => {
       const command = typeof output.args?.command === "string" ? output.args.command : ""
       if (!command.trim() || CONFIRM_RE.test(command)) return
 
+      const atDumpCap = dumpCapSessions.has(input.sessionID)
+      const onlySleep = commandIsOnlySleep(command)
+      const sleepSec = maxSleepSeconds(command)
+      if (onlySleep || (atDumpCap && sleepSec >= 3)) {
+        await log("blocked sleep around read cap", {
+          sessionID: input.sessionID,
+          onlySleep,
+          sleepSec,
+          atDumpCap,
+        })
+        throw new Error(
+          "Do not sleep to wait out a tool error. The read cap is not a rate limit — " +
+            "grep the missing symbol or continue from files already in context. " +
+            BYPASS,
+        )
+      }
+
       for (const statement of splitStatements(command)) {
         const openspecHint = openspecValidateHint(statement)
         if (openspecHint) {
@@ -266,7 +307,6 @@ export const ToolNotShellPlugin: Plugin = async ({ client }) => {
         const target = standInTarget(statement, match.token)
         const count = recordBlock(input.sessionID, match.token)
         const cmdCount = recordCommandBlock(input.sessionID, cmdKey)
-        const atDumpCap = dumpCapSessions.has(input.sessionID)
         const st = sessionState(input.sessionID)
 
         if (

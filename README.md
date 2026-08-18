@@ -19,6 +19,7 @@ Personal [OpenCode](https://opencode.ai) setup for local vLLM models, with plugi
 | `stop-dump-loop` | Stops repeat full-file reads. Explore mode caps unique files, total bytes, and whole-file size. Build/apply caps at 48 files / 200k bytes but still allows unread package modules, tests, OpenSpec files, `pyproject.toml`, and small templates. Dump-cap errors say this is not a rate limit and do not abort the session. |
 | `stop-python-c-loop` | Blocks repeat inline `python -c` / `uv run python -c` debug scripts and caps TestClient/uvicorn/inspect variants per session. Repeat blocks on a child session count toward abort. |
 | `stop-edit-loop` | Blocks identical old/new edits, repeat exact edits, and further edits on a file after several failures. BigBang often retries "no changes to apply" forever without this. |
+| `stop-agent-loop` | **Generic** stuck-session guard: blocks the 3rd identical tool call (git diff, read, edit, grep, pytest, …) and halts after 20 steps (12 on child sessions) with no successful write/edit. Catches loops that succeed but never advance. |
 | `stop-tool-loop-abort` | After 6 consecutive blocked tools, aborts **child** sessions only. vLLM is served with `max-num-seqs=2`; a looping explore child plus parent streaming kills EngineCore. Primary apply is never auto-aborted (that looked like a keypress interrupt). |
 | `playwright-python-api` | Rejects JavaScript Playwright APIs (`waitForTimeout`, `getByRole`, sync `with page.expect_response`) in Python writes/edits, and annotates pytest `AttributeError` output with snake_case mappings. |
 | `stop-pytest-timeout-loop` | Raises bash timeout to 10 min for pytest (including `uv run pytest`), blocks hallucinated `pytest --timeout`, stops repeat runs on the same file/node, stops repeat full-suite runs after an OpenCode bash kill, and annotates timeout output. |
@@ -26,5 +27,6 @@ Personal [OpenCode](https://opencode.ai) setup for local vLLM models, with plugi
 ## Skills and instructions
 
 - **`playwright-python`** — load before writing Playwright Python tests. Documents snake_case APIs, `async with expect_response`, and the official Page docs.
+- **`openspec-split-change`** — installed via OpenSpec (`openspec init` / `/opsx-split`). Split large changes before apply on local BigBang; default to splitting when tasks span backend + templates + e2e.
 - **`no-rewrite-loop.md`** — after a successful write/edit, mark the OpenSpec task done; do not rewrite existing files or rerun finished commands; use OpenCode tools instead of shell stand-ins; explore/archive stop conditions.
 - **`library-docs.md`** — for unfamiliar libraries, load a skill or fetch official docs instead of guessing (Playwright Python is the worked example).

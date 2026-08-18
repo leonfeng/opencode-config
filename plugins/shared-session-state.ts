@@ -17,6 +17,10 @@ export function rememberSession(sessionID: string, parentID?: string) {
   sessionParent.set(sessionID, parentID)
 }
 
+export function isChildSession(sessionID: string): boolean {
+  return Boolean(sessionParent.get(sessionID))
+}
+
 type AbortClient = {
   session: {
     abort: (opts: { path: { id: string } }) => Promise<unknown>

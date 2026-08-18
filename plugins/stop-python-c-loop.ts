@@ -1,4 +1,5 @@
 import type { Plugin } from "@opencode-ai/plugin"
+import { recordToolBlock } from "./shared-session-state.ts"
 
 const SERVICE = "stop-python-c-loop"
 const CONFIRM_RE = /#\s*confirm\s*$/i
@@ -133,6 +134,7 @@ export const StopPythonCLoopPlugin: Plugin = async ({ client }) => {
         const key = normalizeScript(body)
         const prior = st.scripts.get(key) ?? 0
         if (prior >= MAX_SAME_SCRIPT) {
+          await recordToolBlock(client, input.sessionID, "python-c-script")
           await log("blocked repeat python -c script", {
             sessionID: input.sessionID,
             count: prior + 1,
@@ -145,6 +147,7 @@ export const StopPythonCLoopPlugin: Plugin = async ({ client }) => {
         if (family) {
           const famCount = st.families.get(family) ?? 0
           if (famCount >= MAX_FAMILY) {
+            await recordToolBlock(client, input.sessionID, `python-c-${family}`)
             await log("blocked python -c family loop", {
               sessionID: input.sessionID,
               family,

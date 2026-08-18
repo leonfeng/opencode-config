@@ -2,9 +2,8 @@ import { statSync } from "node:fs"
 import { resolve } from "node:path"
 import type { Plugin } from "@opencode-ai/plugin"
 import {
-  dumpCapRecoverySent,
   dumpCapSessions,
-  standInRecoveryInFlight,
+  recordToolBlock,
 } from "./shared-session-state.ts"
 
 const SERVICE = "stop-dump-loop"
@@ -21,9 +20,6 @@ const TEMPLATE_PASS_BYTES = 8_192
 
 const STOP_DUMP =
   "This is a session read cap, not a rate limit. Do not sleep and retry. Do not cat/head in bash. Use grep for a missing symbol, or implement from files already in context."
-
-const DUMP_CAP_RECOVERY =
-  "Read cap is not a rate limit. Do not sleep. Do not retry read or cat. Grep the missing symbol, or continue from files already in context."
 
 function isPassThroughAtCap(filePath: string, size?: number): boolean {
   const p = filePath.replace(/\\/g, "/")
@@ -145,6 +141,7 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
 
       if (atCap && !passThrough) {
         dumpCapSessions.add(input.sessionID)
+        await recordToolBlock(client, input.sessionID, "dump-cap")
         await log("blocked dump cap", {
           sessionID: input.sessionID,
           explore: st.explore,
@@ -153,24 +150,6 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
           maxFiles,
           maxBytes,
         })
-        if (
-          !dumpCapRecoverySent.has(input.sessionID) &&
-          !standInRecoveryInFlight.has(input.sessionID)
-        ) {
-          dumpCapRecoverySent.add(input.sessionID)
-          standInRecoveryInFlight.add(input.sessionID)
-          try {
-            await client.session.promptAsync({
-              path: { id: input.sessionID },
-              body: { parts: [{ type: "text", text: DUMP_CAP_RECOVERY }] },
-            })
-            await log("injected dump-cap recovery", { sessionID: input.sessionID })
-          } catch {
-            dumpCapRecoverySent.delete(input.sessionID)
-          } finally {
-            standInRecoveryInFlight.delete(input.sessionID)
-          }
-        }
         throw new Error(
           `${st.explore ? "Explore" : "Build"} already loaded ${st.uniqueFiles} files (~${st.bytes} bytes). ${STOP_DUMP}`,
         )

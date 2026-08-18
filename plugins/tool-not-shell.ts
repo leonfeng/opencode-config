@@ -1,21 +1,15 @@
 import type { Plugin } from "@opencode-ai/plugin"
-import { dumpCapSessions, standInRecoveryInFlight } from "./shared-session-state.ts"
+import { dumpCapSessions, recordToolBlock } from "./shared-session-state.ts"
 
 const SERVICE = "tool-not-shell"
 const CONFIRM_RE = /#\s*confirm\s*$/i
 const BYPASS = 'To run this in bash anyway, append `# confirm`.'
-
-/** Inject recovery after this many identical stand-in commands. */
-const MAX_IDENTICAL_STANDIN = 2
-const SENTINEL = "Shell stand-in loop recovery:"
 
 type SessionState = {
   /** Stand-in token -> times blocked this session. */
   blocked: Map<string, number>
   /** Normalized stand-in command -> times blocked. */
   commands: Map<string, number>
-  /** Commands we already sent recovery for. */
-  recoverySent: Set<string>
 }
 
 const sessions = new Map<string, SessionState>()
@@ -23,7 +17,7 @@ const sessions = new Map<string, SessionState>()
 function sessionState(sessionID: string): SessionState {
   let st = sessions.get(sessionID)
   if (!st) {
-    st = { blocked: new Map(), commands: new Map(), recoverySent: new Set() }
+    st = { blocked: new Map(), commands: new Map() }
     sessions.set(sessionID, st)
   }
   return st
@@ -56,19 +50,6 @@ function standInTarget(statement: string, token: string): string | null {
 function standInCommandKey(statement: string, token: string): string {
   const target = standInTarget(statement, token)
   return target ? `${token}:${target}` : `${token}:${stripStatementPrefix(statement).replace(/\s+/g, " ").slice(0, 120)}`
-}
-
-function recoveryText(token: string, target: string | null, atDumpCap: boolean): string {
-  const readHint = target
-    ? `Use the grep tool with pattern and path \`${target}\`, or continue from files already read. `
-    : "Use grep or continue from files already read. "
-  const dumpHint = atDumpCap
-    ? "The read tool hit its session cap — cat in bash is also blocked and will never work. "
-    : ""
-  return (
-    `${SENTINEL} Stop running \`${token}\` in bash. ${dumpHint}${readHint}` +
-    "Do not retry this shell command."
-  )
 }
 
 function blockMessage(
@@ -282,6 +263,7 @@ export const ToolNotShellPlugin: Plugin = async ({ client }) => {
       const onlySleep = commandIsOnlySleep(command)
       const sleepSec = maxSleepSeconds(command)
       if (onlySleep || (atDumpCap && sleepSec >= 3)) {
+        await recordToolBlock(client, input.sessionID, "sleep")
         await log("blocked sleep around read cap", {
           sessionID: input.sessionID,
           onlySleep,
@@ -298,6 +280,7 @@ export const ToolNotShellPlugin: Plugin = async ({ client }) => {
       for (const statement of splitStatements(command)) {
         const openspecHint = openspecValidateHint(statement)
         if (openspecHint) {
+          await recordToolBlock(client, input.sessionID, "openspec-validate")
           await log("blocked invalid openspec validate", { sessionID: input.sessionID })
           throw new Error(openspecHint)
         }
@@ -307,32 +290,7 @@ export const ToolNotShellPlugin: Plugin = async ({ client }) => {
         const target = standInTarget(statement, match.token)
         const count = recordBlock(input.sessionID, match.token)
         const cmdCount = recordCommandBlock(input.sessionID, cmdKey)
-        const st = sessionState(input.sessionID)
-
-        if (
-          cmdCount > MAX_IDENTICAL_STANDIN &&
-          !st.recoverySent.has(cmdKey) &&
-          !standInRecoveryInFlight.has(input.sessionID)
-        ) {
-          st.recoverySent.add(cmdKey)
-          standInRecoveryInFlight.add(input.sessionID)
-          const recovery = recoveryText(match.token, target, atDumpCap)
-          await log("injecting shell stand-in recovery", {
-            sessionID: input.sessionID,
-            token: match.token,
-            cmdKey,
-            cmdCount,
-          })
-          try {
-            await client.session.promptAsync({
-              path: { id: input.sessionID },
-              body: { parts: [{ type: "text", text: recovery }] },
-            })
-          } finally {
-            standInRecoveryInFlight.delete(input.sessionID)
-          }
-        }
-
+        await recordToolBlock(client, input.sessionID, `stand-in:${match.token}`)
         await log("blocked shell stand-in", {
           sessionID: input.sessionID,
           token: match.token,

@@ -1,10 +1,7 @@
 import { statSync } from "node:fs"
 import { resolve } from "node:path"
 import type { Plugin } from "@opencode-ai/plugin"
-import {
-  dumpCapSessions,
-  recordToolBlock,
-} from "./shared-session-state.ts"
+import { dumpCapSessions } from "./shared-session-state.ts"
 
 const SERVICE = "stop-dump-loop"
 const EXPLORE_MARKER = "Enter explore mode."
@@ -12,9 +9,9 @@ const MAX_SAME_FILE = 1
 const EXPLORE_MAX_FILES = 8
 const EXPLORE_MAX_BYTES = 80_000
 const EXPLORE_WHOLE_FILE_BYTES = 24_576
-/** Build/apply: allow more than explore, but stop whole-repo dumps. */
-const BUILD_MAX_FILES = 24
-const BUILD_MAX_BYTES = 100_000
+/** Build/apply: allow a full change pass, but stop whole-repo dumps. */
+const BUILD_MAX_FILES = 48
+const BUILD_MAX_BYTES = 200_000
 const BUILD_MAX_PARTIAL_READS = 3
 const TEMPLATE_PASS_BYTES = 8_192
 
@@ -23,7 +20,10 @@ const STOP_DUMP =
 
 function isPassThroughAtCap(filePath: string, size?: number): boolean {
   const p = filePath.replace(/\\/g, "/")
-  if (/\/snekdo\/[^/]+\.py$/.test(p)) return true
+  if (/\/snekdo\/.+\.py$/.test(p)) return true
+  if (/\/tests\/.+\.py$/.test(p)) return true
+  if (/\/pyproject\.toml$/.test(p)) return true
+  if (/\/openspec\/.+\.md$/.test(p)) return true
   if (/\/templates\/[^/]+\.(html|j2|jinja2)$/.test(p)) {
     return size === undefined || size <= TEMPLATE_PASS_BYTES
   }
@@ -141,7 +141,6 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
 
       if (atCap && !passThrough) {
         dumpCapSessions.add(input.sessionID)
-        await recordToolBlock(client, input.sessionID, "dump-cap")
         await log("blocked dump cap", {
           sessionID: input.sessionID,
           explore: st.explore,

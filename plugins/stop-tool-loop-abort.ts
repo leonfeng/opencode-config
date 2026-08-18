@@ -1,5 +1,9 @@
 import type { Plugin } from "@opencode-ai/plugin"
-import { abortedSessions, clearToolBlock } from "./shared-session-state.ts"
+import {
+  abortedSessions,
+  clearToolBlock,
+  rememberSession,
+} from "./shared-session-state.ts"
 
 const SERVICE = "stop-tool-loop-abort"
 
@@ -15,6 +19,12 @@ export const StopToolLoopAbortPlugin: Plugin = async ({ client }) => {
   }
 
   return {
+    event: async ({ event }) => {
+      if (event.type !== "session.created" && event.type !== "session.updated") return
+      const info = event.properties.info
+      rememberSession(info.id, info.parentID)
+    },
+
     "tool.execute.before": async (input) => {
       if (!abortedSessions.has(input.sessionID)) return
       await log("blocked tool after session abort", {

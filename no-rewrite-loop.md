@@ -7,7 +7,7 @@ After every successful implementation `write` or `edit`:
 
 If a shell command already completed, do not run it again. Repeating `pytest`, `python -c`, `git diff`, `git status`, grep, or ls is a loop: stop and use the previous output. After the test suite passes, do not run it again unless a later unfinished task requires it. Do not rerun the same pytest file/node — read the output you already have and edit the code.
 
-Large OpenSpec changes on local BigBang (vLLM, max-num-seqs=2) should be split before apply. Use `/opsx-split` (skill `openspec-split-change`) when `tasks.md` has more than six tasks or the change spans backend + templates + e2e — do not recommend keeping one monolithic apply.
+Large OpenSpec changes on local BigBang (vLLM, max-num-seqs=2) should be split before apply. Use `localspec update` (not bare `openspec update`) and `/opsx-split` when `tasks.md` has more than six tasks or the change spans backend + templates + e2e.
 
 If an `edit` fails with "oldString and newString are identical", the change is already in the file. Mark the OpenSpec task done and move on — do not retry the same edit.
 

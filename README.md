@@ -27,6 +27,6 @@ Personal [OpenCode](https://opencode.ai) setup for local vLLM models, with plugi
 ## Skills and instructions
 
 - **`playwright-python`** — load before writing Playwright Python tests. Documents snake_case APIs, `async with expect_response`, and the official Page docs.
-- **`openspec-split-change`** — installed via OpenSpec (`openspec init` / `/opsx-split`). Split large changes before apply on local BigBang; default to splitting when tasks span backend + templates + e2e.
+- **`openspec-split-change`** — via [LocalSpec](https://github.com/leonfeng/LocalSpec): run `localspec update` (not bare `openspec update`) to keep split + local-model skill overlays on upstream OpenSpec.
 - **`no-rewrite-loop.md`** — after a successful write/edit, mark the OpenSpec task done; do not rewrite existing files or rerun finished commands; use OpenCode tools instead of shell stand-ins; explore/archive stop conditions.
 - **`library-docs.md`** — for unfamiliar libraries, load a skill or fetch official docs instead of guessing (Playwright Python is the worked example).

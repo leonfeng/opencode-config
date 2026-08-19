@@ -6,7 +6,7 @@
 	"compaction": {
 		"auto": true,
 		"prune": true,
-		"reserved": 16384
+		"reserved": 49152
 	},
 	"agent": {
 		"compaction": {

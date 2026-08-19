@@ -11,6 +11,11 @@ Large OpenSpec changes on local BigBang (vLLM, max-num-seqs=2) should be split b
 
 If an `edit` fails with "oldString and newString are identical", the change is already in the file. Mark the OpenSpec task done and move on — do not retry the same edit.
 
+If the loop guard blocks an `edit` or `write` a second time on the same file, **stop rephrasing**. Take one of these exits in order:
+1. Use `bash` to replace the broken section: `python3 -c "import pathlib; p=pathlib.Path('FILE'); p.write_text(p.read_text().replace(OLD, NEW))"` — this bypasses the OpenCode tool guard entirely.
+2. If the file is small enough, use a single `write` with the entire corrected content (not a partial patch).
+3. If neither works, stop and ask the user to manually apply the change, then continue with the next task. Do not spend more than three attempts on any single file section.
+
 If bash output says a session read cap was hit, that is **not** a rate limit. Do not `sleep` and retry `read`. Use grep for a missing symbol, or continue from files already in context.
 
 If bash output says `bash tool terminated command after exceeding timeout`, OpenCode killed the **shell**, not pytest. pytest has **no** `--timeout` CLI flag — never add it. Do not rerun the full suite: use the partial output, run `-m 'not e2e'` for unit tests, or target one file/node (`tests/test_api.py::test_foo`). For long runs, pass a larger `timeout` on the bash tool (milliseconds), not a pytest flag.

@@ -2,8 +2,12 @@ import type { Plugin } from "@opencode-ai/plugin"
 
 const SERVICE = "stop-think-loop"
 const SKIP_AGENTS = new Set(["title", "summary", "compaction"])
-/** BigBang build agent — disable open-ended reasoning to avoid multi-minute stalls. */
+/** Apply/build agent — disable open-ended reasoning to avoid multi-minute stalls. */
 const BUILD_AGENTS = new Set(["build"])
+/** Recover when a think block dominates output (OpenCode step timeout → finish=unknown). */
+const MIN_STALL_REASONING_TOKENS = 400
+const MAX_STALL_OUTPUT_TOKENS = 64
+const MAX_STALL_VISIBLE_CHARS = 200
 const SENTINEL = "Your last reply hit the output token limit while still thinking."
 const RECOVERY =
   `${SENTINEL} The user saw nothing. Stop thinking. Reply now from what you already gathered. Do not rerun tools unless one specific fact is missing.`
@@ -15,7 +19,7 @@ const stalledSessions = new Set<string>()
 
 /** Cap output while recovering so BigBang cannot burn 16k tokens again. */
 const RECOVERY_MAX_OUTPUT_TOKENS = 4096
-/** BigBang build turns: thinking off, but allow room for tool calls + text. */
+/** Local apply build turns: thinking off, but allow room for tool calls + text. */
 const BUILD_MAX_OUTPUT_TOKENS = 8192
 
 const RECOVERY_FINISH = new Set(["tool-calls", "stop", "end_turn"])
@@ -104,8 +108,50 @@ function capOutputTokens(
   }
 }
 
-function isBigBangModel(model: { id?: string }): boolean {
-  return /bigbang/i.test(String(model.id ?? ""))
+/** BigBang and Qwen 3.8 apply via tool calls — long think blocks cause step timeouts. */
+function isApplyBuildModel(model: { id?: string }): boolean {
+  const id = String(model.id ?? "")
+  return /bigbang/i.test(id) || /qwen3\.8/i.test(id)
+}
+
+type MessageInfo = ChatMessage["info"] & {
+  tokens?: { reasoning?: number; output?: number }
+}
+
+function tokenCount(info: MessageInfo, field: "reasoning" | "output"): number {
+  const n = info.tokens?.[field]
+  return typeof n === "number" && Number.isFinite(n) ? n : 0
+}
+
+function visibleTextLength(parts: ChatMessage["parts"]): number {
+  return parts
+    .filter((part) => part.type === "text")
+    .map((part) => partText(part).trim())
+    .join("")
+    .length
+}
+
+function hasToolParts(parts: ChatMessage["parts"]): boolean {
+  return parts.some((part) => part.type === "tool")
+}
+
+/** True when the model spent a long think block with almost no tools or user-visible progress. */
+function isThinkHeavyStall(msg: ChatMessage): boolean {
+  const finish = msg.info.finish
+  if (finish === "length" && !visibleOutput(msg.parts)) return true
+  if (finish !== "unknown" && finish !== "length") return false
+  if (hasToolParts(msg.parts)) return false
+
+  const info = msg.info as MessageInfo
+  const reasoning = tokenCount(info, "reasoning")
+  const output = tokenCount(info, "output")
+  const visibleLen = visibleTextLength(msg.parts)
+
+  return (
+    reasoning >= MIN_STALL_REASONING_TOKENS &&
+    output <= MAX_STALL_OUTPUT_TOKENS &&
+    visibleLen <= MAX_STALL_VISIBLE_CHARS
+  )
 }
 
 function mergeSystemPrompts(system: string[]): string[] {
@@ -161,10 +207,10 @@ export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
 
       const recovering =
         disableThinking.has(input.sessionID) || stalledSessions.has(input.sessionID)
-      const bigBangBuild =
-        BUILD_AGENTS.has(input.agent) && isBigBangModel(input.model)
+      const applyBuild =
+        BUILD_AGENTS.has(input.agent) && isApplyBuildModel(input.model)
 
-      if (bigBangBuild) {
+      if (applyBuild) {
         applyRecoveryParams(output)
         capOutputTokens(
           output,
@@ -173,7 +219,7 @@ export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
         await log(
           recovering
             ? "disabled thinking for recovery"
-            : "build agent: disabled thinking on BigBang",
+            : "build agent: disabled thinking on apply model",
           {
             sessionID: input.sessionID,
             agent: input.agent,
@@ -280,20 +326,24 @@ export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
         const last = messages[messages.length - 1]
         const info = last.info
         if (info.role !== "assistant") return
-        if (visibleOutput(last.parts)) {
-          clearRecovery(sessionID)
-          return
-        }
-        if (info.finish !== "length") return
         if (SKIP_AGENTS.has((info as { agent?: string }).agent ?? "")) return
         if (shouldSkipRecovery(messages)) return
 
+        if (!isThinkHeavyStall(last)) {
+          if (visibleOutput(last.parts)) clearRecovery(sessionID)
+          return
+        }
+
         stalledSessions.add(sessionID)
         disableThinking.add(sessionID)
-        await log("recovering think-length stall", {
+        const tokenInfo = info as MessageInfo
+        await log("recovering think-heavy stall", {
           sessionID,
           messageID: info.id,
-          outputTokens: (info as { tokens?: { output?: number } }).tokens?.output,
+          finish: info.finish,
+          reasoningTokens: tokenCount(tokenInfo, "reasoning"),
+          outputTokens: tokenCount(tokenInfo, "output"),
+          visibleChars: visibleTextLength(last.parts),
         })
         await client.session.promptAsync({
           path: { id: sessionID },

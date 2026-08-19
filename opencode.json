@@ -1,7 +1,7 @@
 {
 	"$schema": "https://opencode.ai/config.json",
-	"model": "sparkrun/qwen3.8-27b",
-	"small_model": "sparkrun/qwen3.8-27b",
+	"model": "vllm/nemotron-3.5-lightning",
+	"small_model": "vllm/nemotron-3.5-lightning",
 	"enabled_providers": ["sparkrun", "vllm"],
 	"compaction": {
 		"auto": true,
@@ -10,13 +10,13 @@
 	},
 	"agent": {
 		"compaction": {
-			"model": "sparkrun/qwen3.8-27b"
+			"model": "vllm/nemotron-3.5-lightning"
 		},
 		"title": {
-			"model": "sparkrun/qwen3.8-27b"
+			"model": "vllm/nemotron-3.5-lightning"
 		},
 		"summary": {
-			"model": "sparkrun/qwen3.8-27b"
+			"model": "vllm/nemotron-3.5-lightning"
 		}
 	},
 	"instructions": [
@@ -71,6 +71,18 @@
 				"timeout": 600000
 			},
 			"models": {
+				"nemotron-3.5-lightning": {
+					"id": "nemotron-3.5-lightning",
+					"name": "Nemotron 3.5 Lightning (local)",
+					"reasoning": true,
+					"limit": {
+						"context": 131072,
+						"output": 16384
+					},
+					"options": {
+						"temperature": 1.0
+					}
+				},
 				"muse-glimmer": {
 					"name": "Muse Glimmer 30B (local)",
 					"limit": {

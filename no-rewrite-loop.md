@@ -17,6 +17,8 @@ If bash output says `bash tool terminated command after exceeding timeout`, Open
 
 OpenCode tools (`read`, `edit`, `write`, `glob`, `grep`) are function calls, not binaries. Never run tool names as shell commands (`edit << EOF` fails with command not found). Do not use `cat`/`head`/`tail` to read files (`read`), `cat >`/`sed -i` to write them (`write`/`edit`), or `ls`/`find` to list them (`glob`). Do not run `grep`/`rg` in bash — call the `grep` tool with pattern and path; count matches in its output if you need a number. Repeating a blocked bash stand-in is a loop: switch to the OpenCode tool immediately. Use bash only for programs on PATH (git, pytest, python, openspec). To change a file, call `edit` with filePath, oldString, and newString.
 
+If a plugin blocks a tool, append `# confirm` to the bash command or to the file path/pattern. Write, edit, and question still run after a no-progress warning — do not keep re-reading.
+
 `openspec validate` takes a positional name: `openspec validate "<name>"`. It has no `--change` flag — that flag is for `status` and `instructions`. `--changes` (plural) validates every change and takes no name. Do not run `openspec validate --help` to rediscover this.
 
 During `/opsx-explore`:

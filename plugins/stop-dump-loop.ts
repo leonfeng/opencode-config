@@ -1,14 +1,20 @@
 import { statSync } from "node:fs"
 import { resolve } from "node:path"
 import type { Plugin } from "@opencode-ai/plugin"
-import { dumpCapSessions } from "./shared-session-state.ts"
+import {
+  dumpCapSessions,
+  isExploreSession,
+  markExploreSession,
+} from "./shared-session-state.ts"
 
 const SERVICE = "stop-dump-loop"
 const EXPLORE_MARKER = "Enter explore mode."
 const MAX_SAME_FILE = 1
-const EXPLORE_MAX_FILES = 8
-const EXPLORE_MAX_BYTES = 80_000
-const EXPLORE_WHOLE_FILE_BYTES = 24_576
+/** @explore /opsx-explore: enough for a frontend map, not a whole-repo dump. */
+const EXPLORE_MAX_FILES = 20
+const EXPLORE_MAX_BYTES = 120_000
+/** Whole-file reads above this must use grep or offset/limit during explore. */
+const EXPLORE_WHOLE_FILE_BYTES = 65_536
 /** Build/apply: allow a full change pass, but stop whole-repo dumps. */
 const BUILD_MAX_FILES = 48
 const BUILD_MAX_BYTES = 200_000
@@ -78,6 +84,7 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
   return {
     "command.execute.before": async (input) => {
       if (!/explore/i.test(input.command)) return
+      markExploreSession(input.sessionID)
       state(input.sessionID).explore = true
       await log("explore session", { sessionID: input.sessionID, command: input.command })
     },
@@ -87,6 +94,7 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
         .map((part) => (part.type === "text" && "text" in part ? String(part.text ?? "") : ""))
         .join("\n")
       if (text.includes(EXPLORE_MARKER)) {
+        markExploreSession(input.sessionID)
         state(input.sessionID).explore = true
       }
     },
@@ -98,6 +106,7 @@ export const StopDumpLoopPlugin: Plugin = async ({ client, directory }) => {
       if (!filePath) return
 
       const st = state(input.sessionID)
+      if (isExploreSession(input.sessionID)) st.explore = true
       const key = resolvePath(filePath)
       const partial = isPartialRead(args)
       const prior = st.reads.get(key) ?? 0

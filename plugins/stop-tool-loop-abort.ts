@@ -21,8 +21,17 @@ export const StopToolLoopAbortPlugin: Plugin = async ({ client }) => {
   return {
     event: async ({ event }) => {
       if (event.type !== "session.created" && event.type !== "session.updated") return
-      const info = event.properties.info
-      rememberSession(info.id, info.parentID)
+      const info = event.properties.info as {
+        id: string
+        parentID?: string
+        agent?: string
+        title?: string
+      }
+      rememberSession(info.id, {
+        parentID: info.parentID,
+        agent: info.agent,
+        title: info.title,
+      })
     },
 
     "tool.execute.before": async (input) => {

@@ -4,7 +4,16 @@ export const dumpCapSessions = new Set<string>()
 /** Consecutive blocked tool calls — abort child sessions before vLLM is hammered. */
 export const consecutiveToolBlocks = new Map<string, number>()
 export const abortedSessions = new Set<string>()
-const sessionParent = new Map<string, string | undefined>()
+
+type SessionInfo = {
+  parentID?: string
+  agent?: string
+  title?: string
+}
+
+const sessionInfo = new Map<string, SessionInfo>()
+/** /opsx-explore, @explore children, or chat that entered explore mode. */
+export const exploreSessions = new Set<string>()
 
 /** vLLM is served with max-num-seqs=2. A looping child plus parent streaming OOMs EngineCore. */
 export const ABORT_AFTER_BLOCKS = 6
@@ -13,20 +22,42 @@ export function clearToolBlock(sessionID: string) {
   consecutiveToolBlocks.set(sessionID, 0)
 }
 
-export function rememberSession(sessionID: string, parentID?: string) {
-  sessionParent.set(sessionID, parentID)
+function looksLikeExplore(info: SessionInfo): boolean {
+  return /explore/i.test(info.agent ?? "") || /explore/i.test(info.title ?? "")
+}
+
+export function rememberSession(
+  sessionID: string,
+  info: SessionInfo = {},
+) {
+  const prev = sessionInfo.get(sessionID) ?? {}
+  const merged: SessionInfo = { ...prev, ...info }
+  sessionInfo.set(sessionID, merged)
+  if (looksLikeExplore(merged)) exploreSessions.add(sessionID)
+}
+
+export function markExploreSession(sessionID: string) {
+  exploreSessions.add(sessionID)
 }
 
 export function isChildSession(sessionID: string): boolean {
-  return Boolean(sessionParent.get(sessionID))
+  return Boolean(sessionInfo.get(sessionID)?.parentID)
+}
+
+export function isExploreSession(sessionID: string): boolean {
+  if (exploreSessions.has(sessionID)) return true
+  const info = sessionInfo.get(sessionID)
+  return Boolean(info && looksLikeExplore(info))
 }
 
 type AbortClient = {
   session: {
     abort: (opts: { path: { id: string } }) => Promise<unknown>
     get?: (opts: { path: { sessionID: string; id?: string } }) => Promise<{
-      data?: { parentID?: string }
+      data?: { parentID?: string; agent?: string; title?: string }
       parentID?: string
+      agent?: string
+      title?: string
     }>
   }
   app: {
@@ -42,9 +73,9 @@ type AbortClient = {
 }
 
 async function isSubagent(client: AbortClient, sessionID: string): Promise<boolean> {
-  if (sessionParent.has(sessionID)) return Boolean(sessionParent.get(sessionID))
+  if (sessionInfo.has(sessionID)) return Boolean(sessionInfo.get(sessionID)?.parentID)
   if (!client.session.get) {
-    sessionParent.set(sessionID, undefined)
+    sessionInfo.set(sessionID, {})
     return false
   }
   try {
@@ -52,10 +83,12 @@ async function isSubagent(client: AbortClient, sessionID: string): Promise<boole
       path: { sessionID, id: sessionID },
     })
     const parent = result?.data?.parentID ?? result?.parentID
-    sessionParent.set(sessionID, parent)
+    const agent = result?.data?.agent ?? result?.agent
+    const title = result?.data?.title ?? result?.title
+    rememberSession(sessionID, { parentID: parent, agent, title })
     return Boolean(parent)
   } catch {
-    sessionParent.set(sessionID, undefined)
+    sessionInfo.set(sessionID, {})
     return false
   }
 }

@@ -2,7 +2,7 @@ import type { Plugin } from "@opencode-ai/plugin"
 
 const SERVICE = "stop-think-loop"
 const SKIP_AGENTS = new Set(["title", "summary", "compaction"])
-/** Primary coding agent — disable open-ended reasoning to avoid multi-minute stalls. */
+/** BigBang build agent — disable open-ended reasoning to avoid multi-minute stalls. */
 const BUILD_AGENTS = new Set(["build"])
 const SENTINEL = "Your last reply hit the output token limit while still thinking."
 const RECOVERY =
@@ -15,7 +15,7 @@ const stalledSessions = new Set<string>()
 
 /** Cap output while recovering so BigBang cannot burn 16k tokens again. */
 const RECOVERY_MAX_OUTPUT_TOKENS = 4096
-/** Normal build turns: thinking off, but allow room for tool calls + text. */
+/** BigBang build turns: thinking off, but allow room for tool calls + text. */
 const BUILD_MAX_OUTPUT_TOKENS = 8192
 
 const RECOVERY_FINISH = new Set(["tool-calls", "stop", "end_turn"])
@@ -104,8 +104,8 @@ function capOutputTokens(
   }
 }
 
-function isReasoningModel(model: { capabilities?: { reasoning?: boolean } }): boolean {
-  return model.capabilities?.reasoning === true
+function isBigBangModel(model: { id?: string }): boolean {
+  return /bigbang/i.test(String(model.id ?? ""))
 }
 
 function mergeSystemPrompts(system: string[]): string[] {
@@ -161,10 +161,10 @@ export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
 
       const recovering =
         disableThinking.has(input.sessionID) || stalledSessions.has(input.sessionID)
-      const buildReasoning =
-        BUILD_AGENTS.has(input.agent) && isReasoningModel(input.model)
+      const bigBangBuild =
+        BUILD_AGENTS.has(input.agent) && isBigBangModel(input.model)
 
-      if (buildReasoning) {
+      if (bigBangBuild) {
         applyRecoveryParams(output)
         capOutputTokens(
           output,
@@ -173,7 +173,7 @@ export const StopThinkLoopPlugin: Plugin = async ({ client }) => {
         await log(
           recovering
             ? "disabled thinking for recovery"
-            : "build agent: disabled thinking on reasoning model",
+            : "build agent: disabled thinking on BigBang",
           {
             sessionID: input.sessionID,
             agent: input.agent,

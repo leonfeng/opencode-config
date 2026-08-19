@@ -242,6 +242,19 @@ function maxSleepSeconds(command: string): number {
   return max
 }
 
+/** True when bash would be redirected/blocked as a stand-in (ls, cat, grep, sleep, …). */
+export function isRedirectedBash(command: string, atDumpCap = false): boolean {
+  if (!command.trim() || CONFIRM_RE.test(command)) return false
+  const onlySleep = commandIsOnlySleep(command)
+  const sleepSec = maxSleepSeconds(command)
+  if (onlySleep || (atDumpCap && sleepSec >= 3)) return true
+  for (const statement of splitStatements(command)) {
+    if (openspecValidateHint(statement)) return true
+    if (hintFor(statement)) return true
+  }
+  return false
+}
+
 export const ToolNotShellPlugin: Plugin = async ({ client }) => {
   const log = async (message: string, extra?: Record<string, unknown>) => {
     try {

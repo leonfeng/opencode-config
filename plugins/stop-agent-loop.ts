@@ -1,22 +1,35 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import {
+  dumpCapSessions,
   isChildSession,
+  isExploreSession,
   recordToolBlock,
 } from "./shared-session-state.ts"
+import { isRedirectedBash } from "./tool-not-shell.ts"
 
 const SERVICE = "stop-agent-loop"
 const CONFIRM_RE = /#\s*confirm\s*$/i
+const PATH_CONFIRM_KEYS = ["filePath", "path", "pattern", "glob_pattern", "command"] as const
 
 /** Block the 3rd identical tool call (git diff, read, edit, grep, …). */
 const MAX_SAME_CALL = 2
-/** Primary apply: reads/greps before first edit can take a while. */
+/** Primary apply: non-lookup steps (bash verify, failed edits) before a write. */
 const MAX_NO_PROGRESS_PRIMARY = 20
-/** Child @explore/@general: answer sooner. */
+/** Child @explore/@general: answer sooner once lookups are done. */
 const MAX_NO_PROGRESS_CHILD = 12
+/** Child explore: unique read/grep/glob identities before forcing findings. */
+const MAX_CHILD_UNIQUE_LOOKUPS = 20
+
+const LOOKUP_TOOLS = new Set(["read", "grep", "glob"])
+/** Still allowed after the no-progress cap — these are the recovery path. */
+const RECOVERY_TOOLS = new Set(["write", "edit", "question"])
+/** Bootstrap / orchestration — do not consume the no-progress budget. */
+const META_TOOLS = new Set(["skill", "task", "todowrite", "todo"])
 
 type SessionState = {
   calls: Map<string, number>
   stepsSinceProgress: number
+  firstPass: Set<string>
 }
 
 const sessions = new Map<string, SessionState>()
@@ -24,7 +37,7 @@ const sessions = new Map<string, SessionState>()
 function state(sessionID: string): SessionState {
   let st = sessions.get(sessionID)
   if (!st) {
-    st = { calls: new Map(), stepsSinceProgress: 0 }
+    st = { calls: new Map(), stepsSinceProgress: 0, firstPass: new Set() }
     sessions.set(sessionID, st)
   }
   return st
@@ -101,6 +114,56 @@ function callKey(tool: string, args: Record<string, unknown>): string {
   return `${tool}:${JSON.stringify(args).slice(0, 180)}`
 }
 
+function uniqueLookupCount(st: SessionState): number {
+  let n = 0
+  for (const key of st.firstPass) {
+    if (key.startsWith("read:") || key.startsWith("grep:") || key.startsWith("glob:")) n += 1
+  }
+  return n
+}
+
+/** Identity for first-pass lookups — path/pattern, ignoring offset/limit. */
+function lookupIdentity(tool: string, args: Record<string, unknown>): string | null {
+  if (tool === "read") {
+    const path = String(args.filePath ?? args.path ?? "")
+    return path ? `read:${path}` : null
+  }
+  if (tool === "grep") {
+    return `grep:${String(args.pattern ?? "")}:${String(args.path ?? "")}`
+  }
+  if (tool === "glob") {
+    return `glob:${String(args.pattern ?? args.glob_pattern ?? "")}`
+  }
+  if (tool === "bash") {
+    const key = normalizeBash(String(args.command ?? ""))
+    if (key.startsWith("bash:openspec:")) return key
+  }
+  return null
+}
+
+function hasConfirmMarker(value: unknown): boolean {
+  if (typeof value === "boolean") return value === true
+  if (typeof value === "string") return CONFIRM_RE.test(value)
+  if (Array.isArray(value)) return value.some(hasConfirmMarker)
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).some(hasConfirmMarker)
+  }
+  return false
+}
+
+function isConfirmBypass(args: Record<string, unknown>): boolean {
+  if (args.confirm === true) return true
+  return hasConfirmMarker(args)
+}
+
+function stripConfirmFromPathArgs(args: Record<string, unknown>) {
+  for (const key of PATH_CONFIRM_KEYS) {
+    const value = args[key]
+    if (typeof value !== "string" || !CONFIRM_RE.test(value)) continue
+    args[key] = value.replace(CONFIRM_RE, "").trimEnd()
+  }
+}
+
 function repeatMessage(tool: string, key: string, count: number): string {
   const hint =
     tool === "bash" && key.includes("git-diff")
@@ -109,25 +172,26 @@ function repeatMessage(tool: string, key: string, count: number): string {
 
   return (
     `Agent loop: the same ${tool} call already ran ${count} time(s) this session. ${hint} ` +
-    "Append `# confirm` to run anyway."
+    "Append `# confirm` to the tool arguments to run anyway."
   )
 }
 
 function noProgressMessage(steps: number, child: boolean): string {
   return (
-    `Agent loop: ${steps} tool calls since your last successful write/edit. ` +
+    `Agent loop: ${steps} non-lookup tool calls without a successful write/edit. ` +
     (child
       ? "Close out with findings — do not keep exploring."
-      : "Stop verifying (git diff, pytest, re-reads). Edit openspec tasks.md, change code, or summarize what's blocked.") +
-    " Append `# confirm` to continue anyway."
+      : "Stop verifying (git diff, pytest, re-reads). You may still write/edit code, edit openspec tasks.md, or use the question tool.") +
+    " Append `# confirm` to the tool arguments to continue anyway."
   )
 }
 
-function isConfirmBypass(tool: string, args: Record<string, unknown>): boolean {
-  if (tool === "bash") {
-    return CONFIRM_RE.test(String(args.command ?? ""))
-  }
-  return false
+function childLookupCapMessage(count: number): string {
+  return (
+    `Explore already looked up ${count} files/patterns. Close out with findings — ` +
+    "do not keep exploring. You may still write a summary; do not read more files. " +
+    "Append `# confirm` to the tool arguments to continue anyway."
+  )
 }
 
 export const StopAgentLoopPlugin: Plugin = async ({ client }) => {
@@ -144,21 +208,78 @@ export const StopAgentLoopPlugin: Plugin = async ({ client }) => {
   return {
     "tool.execute.before": async (input, output) => {
       const args = (output.args ?? {}) as Record<string, unknown>
-      if (isConfirmBypass(input.tool, args)) return
+      if (isConfirmBypass(args)) {
+        stripConfirmFromPathArgs(args)
+        return
+      }
 
       const st = state(input.sessionID)
       const child = isChildSession(input.sessionID)
+      const explore = isExploreSession(input.sessionID)
       const maxNoProgress = child ? MAX_NO_PROGRESS_CHILD : MAX_NO_PROGRESS_PRIMARY
 
-      st.stepsSinceProgress += 1
-      if (st.stepsSinceProgress > maxNoProgress) {
+      if (
+        input.tool === "bash" &&
+        isRedirectedBash(String(args.command ?? ""), dumpCapSessions.has(input.sessionID))
+      ) {
+        await log("skipped no-progress for redirected bash", {
+          sessionID: input.sessionID,
+          command: String(args.command ?? "").slice(0, 80),
+        })
+        return
+      }
+
+      if (META_TOOLS.has(input.tool) || input.tool === "question") {
+        return
+      }
+
+      const identity = lookupIdentity(input.tool, args)
+      const firstPassLookup = Boolean(identity) && !st.firstPass.has(identity!)
+      if (firstPassLookup && identity) {
+        if (explore && LOOKUP_TOOLS.has(input.tool)) {
+          const lookupCount = uniqueLookupCount(st)
+          if (lookupCount >= MAX_CHILD_UNIQUE_LOOKUPS) {
+            await recordToolBlock(client, input.sessionID, "explore-lookup-cap")
+            await log("blocked explore unique-lookup cap", {
+              sessionID: input.sessionID,
+              uniqueLookups: lookupCount,
+              tool: input.tool,
+            })
+            throw new Error(childLookupCapMessage(lookupCount))
+          }
+        }
+        st.firstPass.add(identity)
+        await log("first-pass lookup exempt from no-progress", {
+          sessionID: input.sessionID,
+          identity,
+        })
+      }
+
+      const countsTowardNoProgress =
+        !firstPassLookup &&
+        !(RECOVERY_TOOLS.has(input.tool) && st.stepsSinceProgress > maxNoProgress)
+      if (countsTowardNoProgress) {
+        st.stepsSinceProgress += 1
+      }
+
+      const overCap = st.stepsSinceProgress > maxNoProgress
+      if (overCap && !RECOVERY_TOOLS.has(input.tool)) {
         await recordToolBlock(client, input.sessionID, "no-progress")
         await log("blocked no-progress loop", {
           sessionID: input.sessionID,
           steps: st.stepsSinceProgress,
           child,
+          tool: input.tool,
         })
         throw new Error(noProgressMessage(st.stepsSinceProgress, child))
+      }
+
+      if (overCap && RECOVERY_TOOLS.has(input.tool)) {
+        await log("allowed recovery tool after no-progress cap", {
+          sessionID: input.sessionID,
+          tool: input.tool,
+          steps: st.stepsSinceProgress,
+        })
       }
 
       const key = callKey(input.tool, args)

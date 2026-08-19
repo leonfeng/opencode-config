@@ -1,22 +1,22 @@
 {
 	"$schema": "https://opencode.ai/config.json",
-	"model": "vllm/bigbang",
-	"small_model": "vllm/bigbang",
-	"enabled_providers": ["vllm"],
+	"model": "sparkrun/qwen3.8-27b",
+	"small_model": "sparkrun/qwen3.8-27b",
+	"enabled_providers": ["sparkrun", "vllm"],
 	"compaction": {
 		"auto": true,
 		"prune": true,
-		"reserved": 32768
+		"reserved": 8192
 	},
 	"agent": {
 		"compaction": {
-			"model": "vllm/bigbang"
+			"model": "sparkrun/qwen3.8-27b"
 		},
 		"title": {
-			"model": "vllm/bigbang"
+			"model": "sparkrun/qwen3.8-27b"
 		},
 		"summary": {
-			"model": "vllm/bigbang"
+			"model": "sparkrun/qwen3.8-27b"
 		}
 	},
 	"instructions": [
@@ -39,6 +39,29 @@
 		}
 	},
 	"provider": {
+		"sparkrun": {
+			"npm": "@ai-sdk/openai-compatible",
+			"name": "SparkRun (local)",
+			"options": {
+				"baseURL": "http://127.0.0.1:8888/v1",
+				"apiKey": "sk-local",
+				"timeout": 600000
+			},
+			"models": {
+				"qwen3.8-27b": {
+					"id": "unsloth/Qwen3.8-27B-NVFP4",
+					"name": "Qwen 3.8 27B (local)",
+					"reasoning": true,
+					"limit": {
+						"context": 32768,
+						"output": 8192
+					},
+					"options": {
+						"temperature": 1.0
+					}
+				}
+			}
+		},
 		"vllm": {
 			"npm": "@ai-sdk/openai-compatible",
 			"name": "vLLM (local)",

@@ -47,6 +47,23 @@ function markProgress(sessionID: string) {
   state(sessionID).stepsSinceProgress = 0
 }
 
+function clearGitVerifyRepeatState(sessionID: string): number {
+  const st = state(sessionID)
+  let cleared = 0
+  for (const key of [...st.calls.keys()]) {
+    if (
+      key === "bash:git-status" ||
+      key === "bash:git-log" ||
+      key.startsWith("bash:git-diff:") ||
+      key.startsWith("bash:git-show:")
+    ) {
+      st.calls.delete(key)
+      cleared += 1
+    }
+  }
+  return cleared
+}
+
 function stripShellPrefix(command: string): string {
   return command
     .trim()
@@ -334,9 +351,11 @@ export const StopAgentLoopPlugin: Plugin = async ({ client }) => {
         const meta = output.metadata as { exit?: number } | undefined
         if (typeof meta?.exit === "number" && meta.exit !== 0) return
         markProgress(input.sessionID)
+        const clearedRepeatKeys = clearGitVerifyRepeatState(input.sessionID)
         await log("progress after git add/commit", {
           sessionID: input.sessionID,
           command: command.slice(0, 80),
+          clearedRepeatKeys,
         })
         return
       }

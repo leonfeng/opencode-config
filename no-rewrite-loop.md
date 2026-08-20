@@ -24,6 +24,8 @@ OpenCode tools (`read`, `edit`, `write`, `glob`, `grep`) are function calls, not
 
 If a plugin blocks a tool, append `# confirm` to the bash command or to the file path/pattern. Write, edit, and question still run after a no-progress warning — do not keep re-reading.
 
+Never `pkill`/`kill` `uvicorn`, broad `snekdo`, or ports **8000** / **8888** — that stops the local LLM and crashes OpenCode. For e2e teardown, kill only port **8765** (e.g. `kill $(lsof -t -i:8765)`).
+
 `openspec validate` takes a positional name: `openspec validate "<name>"`. It has no `--change` flag — that flag is for `status` and `instructions`. `--changes` (plural) validates every change and takes no name. Do not run `openspec validate --help` to rediscover this.
 
 During `/opsx-explore`:

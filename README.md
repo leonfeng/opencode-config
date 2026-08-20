@@ -23,6 +23,7 @@ Personal [OpenCode](https://opencode.ai) setup for local vLLM models, with plugi
 | `stop-tool-loop-abort` | After 6 consecutive blocked tools, aborts **child** sessions only. vLLM is served with `max-num-seqs=2`; a looping explore child plus parent streaming kills EngineCore. Primary apply is never auto-aborted (that looked like a keypress interrupt). |
 | `playwright-python-api` | Rejects JavaScript Playwright APIs (`waitForTimeout`, `getByRole`, sync `with page.expect_response`) in Python writes/edits, and annotates pytest `AttributeError` output with snake_case mappings. |
 | `stop-pytest-timeout-loop` | Raises bash timeout to 10 min for pytest (including `uv run pytest`), blocks hallucinated `pytest --timeout`, stops repeat runs on the same file/node, stops repeat full-suite runs after an OpenCode bash kill, and annotates timeout output. |
+| `protect-llm-server` | Blocks `pkill`/`killall`/`kill`/`fuser -k` that would stop the local LLM (`uvicorn`, `vllm`, `snekdo`, ports **8000** / **8888**). Allows e2e cleanup on port **8765**. Append `# confirm` to override. |
 
 ## Skills and instructions
 

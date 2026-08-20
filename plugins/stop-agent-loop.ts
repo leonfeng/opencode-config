@@ -58,6 +58,28 @@ function stripShellPrefix(command: string): string {
     .trim()
 }
 
+/**
+ * Staging/committing is real session progress (and often the *goal*), not
+ * verify-loop noise. Exempt from the no-progress cap; reset the counter after
+ * a successful run. Without this, a long git-log/status explore burns the
+ * budget and then blocks the eventual `git add` / `git commit`.
+ */
+function isGitMutatingBash(command: string): boolean {
+  const s = stripShellPrefix(command)
+  if (!s) return false
+  // Direct: `git add`, `git -C path commit`, or chained `git add -A && git commit …`
+  if (/\bgit(?:\s+-C\s+\S+)?\s+(?:add|commit)\b/.test(s)) return true
+  // Indirect: python subprocess.run(['git', 'add'| 'commit', …])
+  if (
+    /subprocess\.run\s*\(/.test(s) &&
+    /['"]git['"]/.test(s) &&
+    /['"](?:add|commit)['"]/.test(s)
+  ) {
+    return true
+  }
+  return false
+}
+
 function normalizeBash(command: string): string {
   const s = stripShellPrefix(command)
   if (!s) return "bash:empty"
@@ -181,7 +203,7 @@ function noProgressMessage(steps: number, child: boolean): string {
     `Agent loop: ${steps} non-lookup tool calls without a successful write/edit. ` +
     (child
       ? "Close out with findings — do not keep exploring."
-      : "Stop verifying (git diff, pytest, re-reads). You may still write/edit code, edit openspec tasks.md, or use the question tool.") +
+      : "Stop verifying (git diff, pytest, re-reads). You may still write/edit code, edit openspec tasks.md, run git add/commit, or use the question tool.") +
     " Append `# confirm` to the tool arguments to continue anyway."
   )
 }
@@ -233,6 +255,9 @@ export const StopAgentLoopPlugin: Plugin = async ({ client }) => {
         return
       }
 
+      const gitMutating =
+        input.tool === "bash" && isGitMutatingBash(String(args.command ?? ""))
+
       const identity = lookupIdentity(input.tool, args)
       const firstPassLookup = Boolean(identity) && !st.firstPass.has(identity!)
       if (firstPassLookup && identity) {
@@ -257,13 +282,15 @@ export const StopAgentLoopPlugin: Plugin = async ({ client }) => {
 
       const countsTowardNoProgress =
         !firstPassLookup &&
+        !gitMutating &&
         !(RECOVERY_TOOLS.has(input.tool) && st.stepsSinceProgress > maxNoProgress)
       if (countsTowardNoProgress) {
         st.stepsSinceProgress += 1
       }
 
       const overCap = st.stepsSinceProgress > maxNoProgress
-      if (overCap && !RECOVERY_TOOLS.has(input.tool)) {
+      const allowedAfterCap = RECOVERY_TOOLS.has(input.tool) || gitMutating
+      if (overCap && !allowedAfterCap) {
         await recordToolBlock(client, input.sessionID, "no-progress")
         await log("blocked no-progress loop", {
           sessionID: input.sessionID,
@@ -274,11 +301,12 @@ export const StopAgentLoopPlugin: Plugin = async ({ client }) => {
         throw new Error(noProgressMessage(st.stepsSinceProgress, child))
       }
 
-      if (overCap && RECOVERY_TOOLS.has(input.tool)) {
+      if (overCap && allowedAfterCap) {
         await log("allowed recovery tool after no-progress cap", {
           sessionID: input.sessionID,
           tool: input.tool,
           steps: st.stepsSinceProgress,
+          gitMutating,
         })
       }
 
@@ -299,6 +327,20 @@ export const StopAgentLoopPlugin: Plugin = async ({ client }) => {
     },
 
     "tool.execute.after": async (input, output) => {
+      if (input.tool === "bash") {
+        const command =
+          typeof input.args?.command === "string" ? input.args.command : ""
+        if (!isGitMutatingBash(command)) return
+        const meta = output.metadata as { exit?: number } | undefined
+        if (typeof meta?.exit === "number" && meta.exit !== 0) return
+        markProgress(input.sessionID)
+        await log("progress after git add/commit", {
+          sessionID: input.sessionID,
+          command: command.slice(0, 80),
+        })
+        return
+      }
+
       if (input.tool !== "write" && input.tool !== "edit") return
       const text = `${output.output ?? ""}\n${output.title ?? ""}`.trim()
       if (!text) return

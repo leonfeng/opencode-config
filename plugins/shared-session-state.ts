@@ -9,6 +9,7 @@ type SessionInfo = {
   parentID?: string
   agent?: string
   title?: string
+  modelID?: string
 }
 
 const sessionInfo = new Map<string, SessionInfo>()
@@ -34,6 +35,21 @@ export function rememberSession(
   const merged: SessionInfo = { ...prev, ...info }
   sessionInfo.set(sessionID, merged)
   if (looksLikeExplore(merged)) exploreSessions.add(sessionID)
+}
+
+/** Record the active chat model so loop guards can use model-specific thresholds. */
+export function rememberSessionModel(sessionID: string, modelID: string) {
+  if (!sessionID || !modelID) return
+  rememberSession(sessionID, { modelID })
+}
+
+export function getSessionModelID(sessionID: string): string | undefined {
+  return sessionInfo.get(sessionID)?.modelID
+}
+
+/** Nemotron rarely runaway-loops like BigBang/KAT; use looser caps to cut false blocks. */
+export function isNemotronSession(sessionID: string): boolean {
+  return /nemotron/i.test(getSessionModelID(sessionID) ?? "")
 }
 
 export function markExploreSession(sessionID: string) {

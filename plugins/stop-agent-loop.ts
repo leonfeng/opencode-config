@@ -3,7 +3,9 @@ import {
   dumpCapSessions,
   isChildSession,
   isExploreSession,
+  isNemotronSession,
   recordToolBlock,
+  rememberSessionModel,
 } from "./shared-session-state.ts"
 import { isRedirectedBash } from "./tool-not-shell.ts"
 
@@ -13,10 +15,15 @@ const PATH_CONFIRM_KEYS = ["filePath", "path", "pattern", "glob_pattern", "comma
 
 /** Block the 3rd identical tool call (git diff, read, edit, grep, …). */
 const MAX_SAME_CALL = 2
+/** Nemotron: allow more verify retries before treating as a stuck loop. */
+const MAX_SAME_CALL_NEMOTRON = 5
 /** Primary apply: non-lookup steps (bash verify, failed edits) before a write. */
 const MAX_NO_PROGRESS_PRIMARY = 20
+/** Nemotron: multi-commit / split workflows need more status/diff/log headroom. */
+const MAX_NO_PROGRESS_PRIMARY_NEMOTRON = 48
 /** Child @explore/@general: answer sooner once lookups are done. */
 const MAX_NO_PROGRESS_CHILD = 12
+const MAX_NO_PROGRESS_CHILD_NEMOTRON = 24
 /** Child explore: unique read/grep/glob identities before forcing findings. */
 const MAX_CHILD_UNIQUE_LOOKUPS = 20
 
@@ -245,6 +252,10 @@ export const StopAgentLoopPlugin: Plugin = async ({ client }) => {
   }
 
   return {
+    "chat.params": async (input) => {
+      rememberSessionModel(input.sessionID, String(input.model?.id ?? ""))
+    },
+
     "tool.execute.before": async (input, output) => {
       const args = (output.args ?? {}) as Record<string, unknown>
       if (isConfirmBypass(args)) {
@@ -255,7 +266,15 @@ export const StopAgentLoopPlugin: Plugin = async ({ client }) => {
       const st = state(input.sessionID)
       const child = isChildSession(input.sessionID)
       const explore = isExploreSession(input.sessionID)
-      const maxNoProgress = child ? MAX_NO_PROGRESS_CHILD : MAX_NO_PROGRESS_PRIMARY
+      const nemotron = isNemotronSession(input.sessionID)
+      const maxSameCall = nemotron ? MAX_SAME_CALL_NEMOTRON : MAX_SAME_CALL
+      const maxNoProgress = child
+        ? nemotron
+          ? MAX_NO_PROGRESS_CHILD_NEMOTRON
+          : MAX_NO_PROGRESS_CHILD
+        : nemotron
+          ? MAX_NO_PROGRESS_PRIMARY_NEMOTRON
+          : MAX_NO_PROGRESS_PRIMARY
 
       if (
         input.tool === "bash" &&
@@ -329,13 +348,15 @@ export const StopAgentLoopPlugin: Plugin = async ({ client }) => {
 
       const key = callKey(input.tool, args)
       const prior = st.calls.get(key) ?? 0
-      if (prior >= MAX_SAME_CALL) {
+      if (prior >= maxSameCall) {
         await recordToolBlock(client, input.sessionID, `repeat:${input.tool}`)
         await log("blocked repeat tool call", {
           sessionID: input.sessionID,
           tool: input.tool,
           key,
           count: prior + 1,
+          nemotron,
+          maxSameCall,
         })
         throw new Error(repeatMessage(input.tool, key, prior + 1))
       }

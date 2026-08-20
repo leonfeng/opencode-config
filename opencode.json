@@ -17,58 +17,12 @@
 		},
 		"summary": {
 			"model": "vllm/nemotron-3.5-lightning"
-		},
-		"build": {
-			"permission": {
-				"external_directory": {
-					"/tmp": "allow",
-					"/tmp/**": "allow"
-				}
-			}
-		},
-		"plan": {
-			"permission": {
-				"external_directory": {
-					"/tmp": "allow",
-					"/tmp/**": "allow"
-				}
-			}
-		},
-		"explore": {
-			"permission": {
-				"external_directory": {
-					"/tmp": "allow",
-					"/tmp/**": "allow"
-				}
-			}
-		},
-		"general": {
-			"permission": {
-				"external_directory": {
-					"/tmp": "allow",
-					"/tmp/**": "allow"
-				}
-			}
-		},
-		"scout": {
-			"permission": {
-				"external_directory": {
-					"/tmp": "allow",
-					"/tmp/**": "allow"
-				}
-			}
 		}
 	},
 	"instructions": [
 		"/home/leon/.config/opencode/no-rewrite-loop.md",
 		"/home/leon/.config/opencode/library-docs.md"
 	],
-	"permission": {
-		"external_directory": {
-			"/tmp": "allow",
-			"/tmp/**": "allow"
-		}
-	},
 	"mcp": {
 		"playwright": {
 			"type": "local",

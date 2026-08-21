@@ -28,6 +28,11 @@ Never `pkill`/`kill` `uvicorn`, broad `snekdo`, or ports **8000** / **8888** —
 
 `openspec validate` takes a positional name: `openspec validate "<name>"`. It has no `--change` flag — that flag is for `status` and `instructions`. `--changes` (plural) validates every change and takes no name. Do not run `openspec validate --help` to rediscover this.
 
+During `/opsx-propose` with no change name and no description in the same message:
+- Ask first: "What change do you want to work on? Describe what you want to build or fix."
+- Do not read, glob, grep, bash, or run openspec until the user replies with what to build or fix.
+- The workflow prompt text is not a change description. Do not explore the repo to prepare.
+
 During `/opsx-explore`:
 - Thinking only. Do not implement even if the user says "fix it."
 - Do not rerun the same command. After you have answered, stop.
